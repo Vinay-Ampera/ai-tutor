@@ -2,7 +2,11 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.graphs.tutor_graph import clear_tutor_session, run_tutor_graph
+from app.graphs.tutor_graph import (
+    clear_tutor_session,
+    has_tutor_session_context,
+    run_tutor_graph,
+)
 from app.graphs.assessment_nodes import evaluate_quiz_answer, generate_quiz
 from app.graphs.classification_nodes import classify_scope
 from app.graphs.conversation_nodes import (
@@ -18,7 +22,14 @@ from app.graphs.teaching_nodes import (
     generate_explanation,
     select_teaching_approach,
 )
-from app.main import GeminiRequest, generate_gemini_response, root
+from app.main import (
+    GeminiRequest,
+    TutorActionRequest,
+    another_example,
+    explain_more_endpoint,
+    generate_gemini_response,
+    root,
+)
 from app.services.gemini import (
     GeminiConfigurationError,
     GeminiQuotaError,
@@ -261,6 +272,59 @@ class TutorGraphTests(unittest.TestCase):
                         session_id,
                         requested_action="explain_more",
                     )
+        finally:
+            clear_tutor_session(session_id)
+
+    def test_follow_up_actions_reuse_context_and_update_previous_content(self) -> None:
+        session_id = "session-follow-up-actions"
+        clear_tutor_session(session_id)
+        try:
+            with patch(
+                "app.services.gemini.generate_text",
+                side_effect=[
+                    *teaching_outputs(),
+                    classification("educational", False, True),
+                    "A deeper explanation.",
+                    classification("educational", False, True),
+                    "A new example about a library checkout.",
+                    classification("educational", False, True),
+                    "A different example about a queue at a store.",
+                ],
+            ) as generate_text:
+                run_tutor_graph("Explain Python loops", session_id)
+                deeper = run_tutor_graph(
+                    "Explain more about the current lesson.",
+                    session_id,
+                    requested_action="explain_more",
+                )
+                first_example = run_tutor_graph(
+                    "Give me another example for the current lesson.",
+                    session_id,
+                    requested_action="another_example",
+                )
+                second_example = run_tutor_graph(
+                    "Give me another example for the current lesson.",
+                    session_id,
+                    requested_action="another_example",
+                )
+
+            self.assertEqual(deeper["response"], "A deeper explanation.")
+            self.assertEqual(first_example["response"], "A new example about a library checkout.")
+            self.assertEqual(second_example["response"], "A different example about a queue at a store.")
+            self.assertIn(
+                '"previous_explanation": "A loop repeats a set of instructions."',
+                generate_text.call_args_list[5].args[0],
+            )
+            self.assertIn(
+                '"previous_example": "A playlist can play songs one after another, like a loop repeats steps."',
+                generate_text.call_args_list[7].args[0],
+            )
+            self.assertIn(
+                '"previous_example": "A new example about a library checkout."',
+                generate_text.call_args_list[9].args[0],
+            )
+            self.assertTrue(has_tutor_session_context(session_id, "explain_more"))
+            self.assertTrue(has_tutor_session_context(session_id, "another_example"))
         finally:
             clear_tutor_session(session_id)
 
@@ -655,6 +719,7 @@ class TutorGraphTests(unittest.TestCase):
 
         self.assertEqual(result.text, "Static welcome")
         self.assertEqual(result.session_id, "session-1")
+        self.assertFalse(result.follow_up_available)
         run_graph.assert_called_once_with(
             "Hi",
             "session-1",
@@ -670,6 +735,76 @@ class TutorGraphTests(unittest.TestCase):
                 "user_answer": None,
             },
         )
+
+    def test_explain_more_api_route_invokes_graph_with_session_action(self) -> None:
+        with (
+            patch("app.main.has_tutor_session_context", return_value=True),
+            patch(
+                "app.main.run_tutor_graph",
+                return_value={
+                    "response": "A deeper explanation.",
+                    "session_id": "session-1",
+                    "topic": "Python loops",
+                    "student_level": "beginner",
+                    "explanation": "A deeper explanation.",
+                    "example": "A playlist analogy.",
+                },
+            ) as run_graph,
+        ):
+            response = explain_more_endpoint(
+                TutorActionRequest(session_id="session-1")
+            )
+
+        self.assertEqual(response.text, "A deeper explanation.")
+        self.assertTrue(response.follow_up_available)
+        run_graph.assert_called_once_with(
+            "Explain more about the current lesson.",
+            "session-1",
+            requested_action="explain_more",
+            lesson_context=None,
+        )
+
+    def test_another_example_api_route_invokes_graph_with_session_action(self) -> None:
+        with (
+            patch("app.main.has_tutor_session_context", return_value=True),
+            patch(
+                "app.main.run_tutor_graph",
+                return_value={
+                    "response": "A different example.",
+                    "session_id": "session-1",
+                    "topic": "Python loops",
+                    "student_level": "beginner",
+                    "explanation": "A loop repeats instructions.",
+                    "example": "A queue at a store.",
+                },
+            ) as run_graph,
+        ):
+            response = another_example(TutorActionRequest(session_id="session-1"))
+
+        self.assertEqual(response.text, "A different example.")
+        self.assertTrue(response.follow_up_available)
+        run_graph.assert_called_once_with(
+            "Give me another example for the current lesson.",
+            "session-1",
+            requested_action="another_example",
+            lesson_context=None,
+        )
+
+    def test_follow_up_routes_reject_missing_session_context(self) -> None:
+        with (
+            patch("app.main.has_tutor_session_context", return_value=False),
+            patch("app.main.run_tutor_graph") as run_graph,
+        ):
+            with self.assertRaises(HTTPException) as explain_error:
+                explain_more_endpoint(
+                    TutorActionRequest(session_id="missing-session")
+                )
+            with self.assertRaises(HTTPException) as example_error:
+                another_example(TutorActionRequest(session_id="missing-session"))
+
+        self.assertEqual(explain_error.exception.status_code, 409)
+        self.assertEqual(example_error.exception.status_code, 409)
+        run_graph.assert_not_called()
 
     def test_health_check_exposes_backend_instance_id(self) -> None:
         health = root()

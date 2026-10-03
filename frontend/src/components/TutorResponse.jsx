@@ -3,7 +3,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './TutorResponse.css'
 
-function TutorResponse({ messages, isSubmitting, onRetry }) {
+function TutorResponse({
+  followUpAvailable,
+  isReady,
+  messages,
+  isSubmitting,
+  onAnotherExample,
+  onExplainMore,
+  onRetry,
+}) {
   const historyRef = useRef(null)
 
   useEffect(() => {
@@ -47,7 +55,9 @@ function TutorResponse({ messages, isSubmitting, onRetry }) {
                 <button
                   className="retry-button"
                   type="button"
-                  onClick={() => onRetry(message.id, message.retryPrompt)}
+                  onClick={() =>
+                    onRetry(message.id, message.retryPrompt, message.retryAction)
+                  }
                   disabled={isSubmitting}
                 >
                   Try again
@@ -68,6 +78,27 @@ function TutorResponse({ messages, isSubmitting, onRetry }) {
             <span className="response-indicator" aria-hidden="true"><span /></span>
             <p>Thinking it through…</p>
           </div>
+        </div>
+      )}
+
+      {followUpAvailable && (
+        <div className="follow-up-actions" aria-label="Learning follow-ups">
+          <button
+            className="follow-up-button"
+            type="button"
+            onClick={onExplainMore}
+            disabled={isSubmitting || !isReady}
+          >
+            Explain More
+          </button>
+          <button
+            className="follow-up-button"
+            type="button"
+            onClick={onAnotherExample}
+            disabled={isSubmitting || !isReady}
+          >
+            Another Example
+          </button>
         </div>
       )}
     </section>

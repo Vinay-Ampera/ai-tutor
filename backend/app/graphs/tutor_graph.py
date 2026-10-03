@@ -194,3 +194,27 @@ def clear_tutor_session(session_id: str) -> None:
         with _session_entries_lock:
             if _session_entries.get(session_id) is entry:
                 del _session_entries[session_id]
+
+
+def has_tutor_session_context(
+    session_id: str,
+    requested_action: TutorAction,
+) -> bool:
+    with _session_entries_lock:
+        entry = _session_entries.get(session_id)
+    if entry is None:
+        return False
+
+    with entry.lock:
+        with _session_entries_lock:
+            if _session_entries.get(session_id) is not entry:
+                return False
+            state = entry.state
+
+        if state is None:
+            return False
+
+        required_context = ("topic", "student_level", "explanation")
+        if requested_action == "another_example":
+            required_context += ("example",)
+        return all(state.get(key) for key in required_context)

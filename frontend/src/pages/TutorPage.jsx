@@ -7,9 +7,11 @@ function TutorPage({ isActive, tutorSession }) {
   const {
     askQuestion,
     connection,
+    followUpAvailable,
     isSubmitting,
     messages,
     prompt,
+    requestFollowUp,
     retryQuestion,
     resetSession,
     sessionNotice,
@@ -32,8 +34,12 @@ function TutorPage({ isActive, tutorSession }) {
         </div>
 
         <TutorResponse
+          followUpAvailable={followUpAvailable}
+          isReady={connection !== 'checking'}
           isSubmitting={isSubmitting}
           messages={messages}
+          onAnotherExample={() => requestFollowUp('another_example')}
+          onExplainMore={() => requestFollowUp('explain_more')}
           onRetry={retryQuestion}
         />
         {sessionNotice && (

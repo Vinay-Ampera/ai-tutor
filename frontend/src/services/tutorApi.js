@@ -34,9 +34,40 @@ export async function requestTutorAnswer(prompt, sessionId) {
   })
   const result = await readResponse(response)
 
-  if (typeof result.text !== 'string' || !result.text.trim()) {
-    throw new Error('The tutor returned an empty response. Please try again.')
+  return validateTutorAnswer(result)
+}
+
+const followUpEndpoints = {
+  explain_more: '/api/tutor/explain-more',
+  another_example: '/api/tutor/example',
+}
+
+export async function requestTutorFollowUp(action, sessionId) {
+  const endpoint = followUpEndpoints[action]
+  if (!endpoint) {
+    throw new Error(`Unsupported tutor follow-up action: ${action}`)
   }
 
-  return result.text.trim()
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+  const result = await readResponse(response)
+  return validateTutorAnswer(result)
+}
+
+function validateTutorAnswer(result) {
+  if (
+    typeof result.text !== 'string' ||
+    !result.text.trim() ||
+    typeof result.follow_up_available !== 'boolean'
+  ) {
+    throw new Error('The tutor returned an invalid response. Please try again.')
+  }
+
+  return {
+    text: result.text.trim(),
+    followUpAvailable: result.follow_up_available,
+  }
 }

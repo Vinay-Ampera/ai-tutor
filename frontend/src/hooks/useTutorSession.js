@@ -3,6 +3,7 @@ import {
   checkTutorHealth,
   clearTutorSession,
   requestTutorAnswer,
+  requestTutorFollowUp,
 } from '../services/tutorApi.js'
 
 const SESSION_ID_KEY = 'ai-tutor.session-id'
@@ -108,7 +109,12 @@ export function useTutorSession() {
       const answer = await requestTutorAnswer(cleanedPrompt, sessionId)
       setMessages((currentMessages) => [
         ...currentMessages,
-        { id: createMessageId(), role: 'assistant', content: answer },
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: answer.text,
+          followUpAvailable: answer.followUpAvailable,
+        },
       ])
     } catch (requestError) {
       const message =
@@ -123,6 +129,58 @@ export function useTutorSession() {
           role: 'error',
           content: message,
           retryPrompt: cleanedPrompt,
+        },
+      ])
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function requestFollowUp(action, { addQuestion = true } = {}) {
+    if (isSubmitting) return
+
+    const actionLabels = {
+      explain_more: 'Explain more',
+      another_example: 'Give me another example',
+    }
+    const label = actionLabels[action]
+    if (!label) throw new Error(`Unsupported tutor follow-up action: ${action}`)
+
+    if (addQuestion) {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        { id: createMessageId(), role: 'user', content: label },
+      ])
+    }
+
+    setIsSubmitting(true)
+    setSessionNotice('')
+
+    try {
+      const answer = await requestTutorFollowUp(action, sessionId)
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: answer.text,
+          followUpAvailable: answer.followUpAvailable,
+        },
+      ])
+    } catch (requestError) {
+      const message =
+        requestError instanceof TypeError
+          ? 'Could not reach the tutor service. Check that the backend is running and try again.'
+          : requestError.message || 'Something went wrong. Please try again.'
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: createMessageId(),
+          role: 'error',
+          content: message,
+          retryPrompt: label,
+          retryAction: action,
         },
       ])
     } finally {
@@ -149,10 +207,11 @@ export function useTutorSession() {
     }
   }
 
-  function retryQuestion(errorMessageId, question) {
+  function retryQuestion(errorMessageId, question, action) {
     setMessages((currentMessages) =>
       currentMessages.filter((message) => message.id !== errorMessageId),
     )
+    if (action) return requestFollowUp(action, { addQuestion: false })
     return askQuestion(question, { addQuestion: false })
   }
 
@@ -162,9 +221,13 @@ export function useTutorSession() {
     isSubmitting,
     messages,
     prompt,
+    requestFollowUp,
     retryQuestion,
     resetSession,
     sessionNotice,
     setPrompt,
+    followUpAvailable: messages.some(
+      (message) => message.role === 'assistant' && message.followUpAvailable,
+    ),
   }
 }
