@@ -15,6 +15,14 @@ async function readResponse(response) {
 
 export async function checkTutorHealth(signal) {
   const response = await fetch(`${API_BASE_URL}/`, { signal })
+  return readResponse(response)
+}
+
+export async function clearTutorSession(sessionId) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' },
+  )
   await readResponse(response)
 }
 

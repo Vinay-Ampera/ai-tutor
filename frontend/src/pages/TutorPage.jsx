@@ -6,11 +6,13 @@ import './TutorPage.css'
 function TutorPage({ isActive, tutorSession }) {
   const {
     askQuestion,
+    connection,
     isSubmitting,
     messages,
     prompt,
     retryQuestion,
     resetSession,
+    sessionNotice,
     setPrompt,
   } = tutorSession
 
@@ -34,7 +36,11 @@ function TutorPage({ isActive, tutorSession }) {
           messages={messages}
           onRetry={retryQuestion}
         />
+        {sessionNotice && (
+          <p className="session-notice" role="status">{sessionNotice}</p>
+        )}
         <QuestionForm
+          isReady={connection !== 'checking'}
           isSubmitting={isSubmitting}
           hasMessages={messages.length > 0}
           onAsk={askQuestion}

@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.graphs.tutor_graph import run_tutor_graph
+from app.graphs.tutor_graph import clear_tutor_session, run_tutor_graph
 from app.graphs.assessment_nodes import evaluate_quiz_answer, generate_quiz
 from app.graphs.classification_nodes import classify_scope
 from app.graphs.conversation_nodes import (
@@ -18,7 +18,7 @@ from app.graphs.teaching_nodes import (
     generate_explanation,
     select_teaching_approach,
 )
-from app.main import GeminiRequest, generate_gemini_response
+from app.main import GeminiRequest, generate_gemini_response, root
 from app.services.gemini import (
     GeminiConfigurationError,
     GeminiQuotaError,
@@ -216,6 +216,53 @@ class TutorGraphTests(unittest.TestCase):
         self.assertTrue(
             generate_text.call_args_list[1].args[0].startswith(AI_TUTOR_PROFILE)
         )
+
+    def test_follow_up_reuses_session_context_until_session_is_cleared(self) -> None:
+        session_id = "session-context-retention"
+        clear_tutor_session(session_id)
+        try:
+            with patch(
+                "app.services.gemini.generate_text",
+                side_effect=[
+                    *teaching_outputs(),
+                    classification("educational", False, True),
+                    "A more detailed explanation of Python loops.",
+                ],
+            ) as generate_text:
+                first_response = run_tutor_graph(
+                    "Explain Python loops",
+                    session_id,
+                )
+                follow_up_response = run_tutor_graph(
+                    "Tell me more",
+                    session_id,
+                    requested_action="explain_more",
+                )
+
+            self.assertEqual(first_response["topic"], "Python loops")
+            self.assertEqual(follow_up_response["topic"], "Python loops")
+            self.assertEqual(
+                follow_up_response["response"],
+                "A more detailed explanation of Python loops.",
+            )
+            self.assertIn(
+                '"previous_explanation": "A loop repeats a set of instructions."',
+                generate_text.call_args_list[-1].args[0],
+            )
+
+            clear_tutor_session(session_id)
+            with patch(
+                "app.services.gemini.generate_text",
+                return_value=classification("educational", False, True),
+            ):
+                with self.assertRaises(GeminiRequestError):
+                    run_tutor_graph(
+                        "Tell me more",
+                        session_id,
+                        requested_action="explain_more",
+                    )
+        finally:
+            clear_tutor_session(session_id)
 
     def test_broad_technical_learning_questions_reach_teaching(self) -> None:
         questions = (
@@ -607,6 +654,7 @@ class TutorGraphTests(unittest.TestCase):
             )
 
         self.assertEqual(result.text, "Static welcome")
+        self.assertEqual(result.session_id, "session-1")
         run_graph.assert_called_once_with(
             "Hi",
             "session-1",
@@ -622,6 +670,12 @@ class TutorGraphTests(unittest.TestCase):
                 "user_answer": None,
             },
         )
+
+    def test_health_check_exposes_backend_instance_id(self) -> None:
+        health = root()
+
+        self.assertEqual(health["message"], "AI Tutor API is running")
+        self.assertTrue(health["server_instance_id"])
 
 
 if __name__ == "__main__":

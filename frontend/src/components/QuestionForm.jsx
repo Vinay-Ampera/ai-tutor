@@ -9,6 +9,7 @@ const starterQuestions = [
 
 function QuestionForm({
   hasMessages,
+  isReady,
   isSubmitting,
   onAsk,
   onPromptChange,
@@ -61,7 +62,7 @@ function QuestionForm({
         />
         <div className="form-footer">
           <span className="character-count">{prompt.length} / 2000</span>
-          <button className="submit-button" type="submit" disabled={!prompt.trim() || isSubmitting}>
+          <button className="submit-button" type="submit" disabled={!prompt.trim() || isSubmitting || !isReady}>
             {isSubmitting ? (
               <><span className="button-spinner" aria-hidden="true" /> Thinking</>
             ) : (

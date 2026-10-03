@@ -59,6 +59,12 @@
   opacity: 0.55;
 }
 
+.session-notice {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 @keyframes tutor-page-arrive {
   from {
     opacity: 0;

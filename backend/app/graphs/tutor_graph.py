@@ -1,3 +1,4 @@
+from threading import Lock
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -103,6 +104,17 @@ def build_tutor_graph():
 
 tutor_graph = build_tutor_graph()
 
+_session_entries_lock = Lock()
+
+
+class _SessionEntry:
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.state: TutorState | None = None
+
+
+_session_entries: dict[str, _SessionEntry] = {}
+
 
 def run_tutor_graph(
     user_question: str,
@@ -110,9 +122,10 @@ def run_tutor_graph(
     requested_action: TutorAction = "teach",
     lesson_context: dict[str, str | None] | None = None,
 ) -> TutorState:
+    active_session_id = session_id or uuid4().hex
     context = lesson_context or {}
     initial_state: TutorState = {
-        "session_id": session_id or uuid4().hex,
+        "session_id": active_session_id,
         "user_question": user_question,
         "request_category": None,
         "is_identity_query": False,
@@ -133,4 +146,51 @@ def run_tutor_graph(
         "next_action": "scope_check",
         "response": "",
     }
-    return tutor_graph.invoke(initial_state)
+    while True:
+        with _session_entries_lock:
+            entry = _session_entries.setdefault(
+                active_session_id,
+                _SessionEntry(),
+            )
+
+        with entry.lock:
+            with _session_entries_lock:
+                if _session_entries.get(active_session_id) is not entry:
+                    continue
+
+                previous_state = entry.state
+                if previous_state is not None:
+                    if initial_state["topic"] is None:
+                        initial_state["topic"] = previous_state["topic"]
+                    if initial_state["student_level"] is None:
+                        initial_state["student_level"] = previous_state["student_level"]
+                    if initial_state["teaching_approach"] is None:
+                        initial_state["teaching_approach"] = previous_state[
+                            "teaching_approach"
+                        ]
+                    if initial_state["explanation"] is None:
+                        initial_state["explanation"] = previous_state["explanation"]
+                    if initial_state["example"] is None:
+                        initial_state["example"] = previous_state["example"]
+                    if initial_state["quiz_question"] is None:
+                        initial_state["quiz_question"] = previous_state["quiz_question"]
+                    if initial_state["expected_quiz_answer"] is None:
+                        initial_state["expected_quiz_answer"] = previous_state[
+                            "expected_quiz_answer"
+                        ]
+
+            result = tutor_graph.invoke(initial_state)
+            entry.state = result
+            return result
+
+
+def clear_tutor_session(session_id: str) -> None:
+    with _session_entries_lock:
+        entry = _session_entries.get(session_id)
+    if entry is None:
+        return
+
+    with entry.lock:
+        with _session_entries_lock:
+            if _session_entries.get(session_id) is entry:
+                del _session_entries[session_id]

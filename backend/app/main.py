@@ -1,8 +1,10 @@
+from uuid import uuid4
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from app.graphs.tutor_graph import run_tutor_graph
+from app.graphs.tutor_graph import clear_tutor_session, run_tutor_graph
 from app.graphs.tutor_state import TutorAction
 from app.services.gemini import (
     GeminiConfigurationError,
@@ -11,13 +13,14 @@ from app.services.gemini import (
 )
 
 app = FastAPI(title="AI Tutor API")
+SERVER_INSTANCE_ID = uuid4().hex
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
-    allow_methods=["GET", "POST"],
+    allow_methods=["DELETE", "GET", "POST"],
     allow_headers=["Content-Type"],
 )
 
@@ -38,11 +41,20 @@ class GeminiRequest(BaseModel):
 
 class GeminiResponse(BaseModel):
     text: str
+    session_id: str
 
 
 @app.get("/")
 def root():
-    return {"message": "AI Tutor API is running"}
+    return {
+        "message": "AI Tutor API is running",
+        "server_instance_id": SERVER_INSTANCE_ID,
+    }
+
+
+@app.delete("/api/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str) -> None:
+    clear_tutor_session(session_id)
 
 
 @app.post("/api/gemini/generate", response_model=GeminiResponse)
@@ -73,4 +85,7 @@ def generate_gemini_response(request: GeminiRequest) -> GeminiResponse:
     except GeminiRequestError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
-    return GeminiResponse(text=result["response"])
+    return GeminiResponse(
+        text=result["response"],
+        session_id=result["session_id"],
+    )
