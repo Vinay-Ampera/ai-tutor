@@ -1,0 +1,161 @@
+.sidebar {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 30px 20px 24px;
+  color: var(--sidebar-text);
+  background: var(--forest);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  width: fit-content;
+  color: var(--sidebar-text);
+  text-decoration: none;
+}
+
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--forest);
+  background: var(--marigold);
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.brand-name {
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.sidebar-label {
+  margin: 64px 0 12px 10px;
+  color: #9eb4a7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  line-height: 1.4;
+}
+
+.primary-nav {
+  display: grid;
+  gap: 5px;
+}
+
+.nav-link {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border-left: 2px solid transparent;
+  color: #d1ded6;
+  font-size: 14px;
+  text-decoration: none;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.nav-link span {
+  color: #8ca497;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.nav-link:hover,
+.nav-link.is-active {
+  border-left-color: var(--marigold);
+  color: #fffdf6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nav-link.is-active span {
+  color: var(--marigold);
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 0 10px;
+}
+
+.sidebar-rule {
+  width: 100%;
+  height: 1px;
+  margin-bottom: 17px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.sidebar-bottom p {
+  margin-bottom: 8px;
+  color: #e8eee8;
+  font-family: var(--serif);
+  font-size: 17px;
+}
+
+.sidebar-bottom span {
+  color: #9eb4a7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    padding-inline: 15px;
+  }
+}
+
+@media (max-width: 680px) {
+  .sidebar {
+    min-height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 20px;
+  }
+
+  .brand-mark {
+    width: 31px;
+    height: 31px;
+  }
+
+  .brand-name {
+    font-size: 18px;
+  }
+
+  .sidebar-label,
+  .sidebar-bottom {
+    display: none;
+  }
+
+  .primary-nav {
+    display: flex;
+    gap: 3px;
+  }
+
+  .nav-link {
+    min-height: 36px;
+    gap: 7px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+
+  .nav-link span {
+    display: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .sidebar {
+    padding-inline: 13px;
+  }
+}
