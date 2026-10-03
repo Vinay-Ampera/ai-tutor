@@ -8,7 +8,7 @@ Status reviewed on 2026-10-03:
 
 - **Stage 1 — Project Setup: Complete.** Poetry/FastAPI, LangGraph and Gemini dependencies are configured in `pyproject.toml`; the React/Vite frontend exists under `frontend/`.
 - **Stage 2 — Basic FastAPI API: Complete for local development.** The health endpoint and Gemini endpoint are available, local Vite CORS is configured, and the learner confirmed both servers run.
-- **Stage 3 — Gemini Connection: Complete per learner verification.** The service in `backend/app/services/gemini.py` reads backend configuration; `POST /api/gemini/generate` returns Gemini text. Never move the key to the frontend.
+- **Stage 3 — Gemini Connection: Complete.** `backend/app/services/gemini.py` uses the account-verified `gemini-3.1-flash-lite` model by default, applies explicit IPv4 transport for this development environment, and surfaces unavailable models and provider failures. Never move the key to the frontend.
 - **Stage 4 — Basic React Tutor UI: Complete per learner verification.** Dashboard and tutor pages are under `frontend/src/pages/`; reusable navigation, form, response, header, and footer UI are under `frontend/src/components/`; tutor state and API communication are in `hooks/` and `services/`. The tutor retains ordered turns until Clear Chat, clears the composer after sending, and pins the composer beneath the scrollable transcript. Browser checks covered multiple turns, retry, reset, navigation, and mobile overflow.
 - **Stage 5 — Guarded LangGraph Foundation: Complete.** The existing tutor endpoint routes every message through a deterministic identity check and a structured scope-classification node before teaching. Identity, greeting, and out-of-scope responses are static; malformed or failed classifications fail closed. Only educational classifications reach the teaching node. Mocked tests cover the routing branches and identity bypass.
 - **Tutor capabilities response and broad topic classification: Complete.** Narrow tutor-help questions receive a static overview of broad academic and technical learning capabilities. Learning questions across academic and technical topics classify as educational, while practical/commercial/creative requests still take the refusal path.
@@ -53,6 +53,7 @@ Keep the Gemini key exclusively in the backend. The UI uses `VITE_API_URL` only 
 - Never print, expose, or commit API keys. Keep secrets on the backend; do not put them in `frontend/.env` or any `VITE_` variable.
 - The root `.gitignore` already ignores backend and frontend `.env` files. Preserve that protection.
 - `frontend/.env` currently sets `VITE_API_URL=http://localhost:8000`.
+- The Gemini account currently supports `gemini-3.1-flash-lite`; keep `GEMINI_MODEL` aligned with an enabled model. This development environment cannot establish Gemini connections over IPv6, so `GEMINI_IPV4_ONLY=true` is the backend default; set it to `false` only in an IPv6-only environment.
 
 ## Development Conventions
 - Read the roadmap and nearby implementation before making a stage change.
@@ -62,4 +63,4 @@ Keep the Gemini key exclusively in the backend. The UI uses `VITE_API_URL` only 
 - Do not treat a dependency being installed or a server command having been run as proof that a feature works.
 
 ## Verification Note
-Stage 7 session behavior is covered by backend tests for follow-up context, session-state retention, transcript restoration data, and Clear Chat removal. On 2026-10-03, all 28 backend unit tests passed, and frontend `npm run lint` and `npm run build` passed. Run relevant backend and frontend checks after subsequent API, session, or workflow changes.
+Stage 7 session behavior is covered by backend tests for follow-up context, session-state retention, transcript restoration data, and Clear Chat removal. On 2026-10-03, all 32 backend unit tests passed, and a live educational request completed through the local tutor API with HTTP 200 in about 9 seconds using the account-verified model. Frontend `npm run lint` and `npm run build` passed in the prior UI stage. Run relevant backend and frontend checks after subsequent API, session, or workflow changes.

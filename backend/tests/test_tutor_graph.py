@@ -19,8 +19,11 @@ from app.graphs.teaching_nodes import (
     select_teaching_approach,
 )
 from app.main import GeminiRequest, generate_gemini_response
-from app.services.gemini import GeminiQuotaError, GeminiRequestError
-from app.session_store import session_store
+from app.services.gemini import (
+    GeminiConfigurationError,
+    GeminiQuotaError,
+    GeminiRequestError,
+)
 from fastapi import HTTPException
 from google.genai.errors import ClientError
 
@@ -213,32 +216,6 @@ class TutorGraphTests(unittest.TestCase):
         self.assertTrue(
             generate_text.call_args_list[1].args[0].startswith(AI_TUTOR_PROFILE)
         )
-
-    def test_follow_up_action_uses_previous_learning_context(self) -> None:
-        with patch(
-            "app.services.gemini.generate_text",
-            side_effect=[
-                classification("educational", False, True),
-                "A loop can also be understood as repeating a sequence.",
-            ],
-        ) as generate_text:
-            result = run_tutor_graph(
-                "Can you explain more?",
-                "session-1",
-                requested_action="explain_more",
-                prior_state=lesson_state(),
-            )
-
-        self.assertEqual(result["topic"], "Python loops")
-        self.assertEqual(
-            result["explanation"],
-            "A loop can also be understood as repeating a sequence.",
-        )
-        self.assertIn(
-            "A loop repeats a set of instructions.",
-            generate_text.call_args.args[0],
-        )
-        self.assertEqual(generate_text.call_count, 2)
 
     def test_broad_technical_learning_questions_reach_teaching(self) -> None:
         questions = (
@@ -480,6 +457,17 @@ class TutorGraphTests(unittest.TestCase):
 
         generate_text.assert_called_once()
 
+    def test_classifier_configuration_error_is_not_misreported_as_refusal(
+        self,
+    ) -> None:
+        error = GeminiConfigurationError("Configured model is unavailable.")
+        with patch(
+            "app.services.gemini.generate_text",
+            side_effect=error,
+        ):
+            with self.assertRaises(GeminiConfigurationError):
+                run_tutor_graph("Explain Python")
+
     def test_api_returns_429_for_classifier_quota_exhaustion(self) -> None:
         with patch(
             "app.main.run_tutor_graph",
@@ -490,6 +478,19 @@ class TutorGraphTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 429)
         self.assertIn("quota", raised.exception.detail.lower())
+
+    def test_api_returns_actionable_503_for_unavailable_model(self) -> None:
+        with patch(
+            "app.main.run_tutor_graph",
+            side_effect=GeminiConfigurationError(
+                "Gemini model is unavailable. Set GEMINI_MODEL to a supported model."
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                generate_gemini_response(GeminiRequest(prompt="Explain Python"))
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("GEMINI_MODEL", raised.exception.detail)
 
     def test_gemini_sdk_429_is_translated_to_quota_error(self) -> None:
         client = MagicMock()
@@ -620,52 +621,7 @@ class TutorGraphTests(unittest.TestCase):
                 "expected_quiz_answer": None,
                 "user_answer": None,
             },
-            prior_state=None,
         )
-
-    def test_api_retains_session_state_and_history_until_clear(self) -> None:
-        session_id = "stage-7-session"
-        session_store.delete(session_id)
-        self.addCleanup(session_store.delete, session_id)
-        first_state = lesson_state()
-        first_state["session_id"] = session_id
-        first_state["response"] = "First explanation"
-        second_state = lesson_state()
-        second_state["session_id"] = session_id
-        second_state["response"] = "Follow-up explanation"
-
-        with patch(
-            "app.main.run_tutor_graph",
-            side_effect=[first_state, second_state],
-        ) as run_graph:
-            first_response = generate_gemini_response(
-                GeminiRequest(prompt="Explain loops", session_id=session_id)
-            )
-            second_response = generate_gemini_response(
-                GeminiRequest(prompt="Explain more", session_id=session_id)
-            )
-
-        self.assertEqual(first_response.session_id, session_id)
-        self.assertEqual(second_response.text, "Follow-up explanation")
-        self.assertIs(run_graph.call_args_list[1].kwargs["prior_state"], first_state)
-
-        from app.main import clear_tutor_session, get_tutor_session
-
-        history = get_tutor_session(session_id)
-        self.assertEqual(
-            [(message.role, message.content) for message in history.messages],
-            [
-                ("user", "Explain loops"),
-                ("assistant", "First explanation"),
-                ("user", "Explain more"),
-                ("assistant", "Follow-up explanation"),
-            ],
-        )
-
-        clear_tutor_session(session_id)
-        with self.assertRaises(HTTPException) as raised:
-            get_tutor_session(session_id)
-        self.assertEqual(raised.exception.status_code, 404)
 
 
 if __name__ == "__main__":

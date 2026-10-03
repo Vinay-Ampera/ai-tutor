@@ -6,7 +6,6 @@ import './TutorPage.css'
 function TutorPage({ isActive, tutorSession }) {
   const {
     askQuestion,
-    isReady,
     isSubmitting,
     messages,
     prompt,
@@ -24,15 +23,14 @@ function TutorPage({ isActive, tutorSession }) {
             <h1 id="question-title">Ask your tutor</h1>
           </div>
           {messages.length > 0 && (
-            <button className="text-button" type="button" onClick={resetSession} disabled={isSubmitting || !isReady}>
-              Clear Chat
+            <button className="text-button" type="button" onClick={resetSession} disabled={isSubmitting}>
+              Start over
             </button>
           )}
         </div>
 
         <TutorResponse
           isSubmitting={isSubmitting}
-          isReady={isReady}
           messages={messages}
           onRetry={retryQuestion}
         />

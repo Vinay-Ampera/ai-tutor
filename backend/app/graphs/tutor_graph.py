@@ -109,14 +109,8 @@ def run_tutor_graph(
     session_id: str | None = None,
     requested_action: TutorAction = "teach",
     lesson_context: dict[str, str | None] | None = None,
-    prior_state: TutorState | None = None,
 ) -> TutorState:
     context = lesson_context or {}
-    previous_state = prior_state or {}
-
-    def context_value(key: str) -> str | None:
-        return context.get(key) or previous_state.get(key)
-
     initial_state: TutorState = {
         "session_id": session_id or uuid4().hex,
         "user_question": user_question,
@@ -127,15 +121,15 @@ def run_tutor_graph(
         "is_greeting": False,
         "is_educational": False,
         "requested_action": requested_action,
-        "quiz_question": context_value("quiz_question"),
-        "expected_quiz_answer": context_value("expected_quiz_answer"),
-        "user_answer": context_value("user_answer"),
+        "quiz_question": context.get("quiz_question"),
+        "expected_quiz_answer": context.get("expected_quiz_answer"),
+        "user_answer": context.get("user_answer"),
         "evaluation": None,
-        "topic": context_value("topic"),
-        "student_level": context_value("student_level"),
-        "teaching_approach": context_value("teaching_approach"),
-        "explanation": context_value("explanation"),
-        "example": context_value("example"),
+        "topic": context.get("topic"),
+        "student_level": context.get("student_level"),
+        "teaching_approach": context.get("teaching_approach"),
+        "explanation": context.get("explanation"),
+        "example": context.get("example"),
         "next_action": "scope_check",
         "response": "",
     }

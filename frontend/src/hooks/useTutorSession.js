@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  checkTutorHealth,
-  clearTutorSession,
-  getTutorSession,
-  requestTutorAnswer,
-} from '../services/tutorApi.js'
-
-const SESSION_STORAGE_KEY = 'ai-tutor-session-id'
+import { checkTutorHealth, requestTutorAnswer } from '../services/tutorApi.js'
 
 export function useTutorSession() {
   const [prompt, setPrompt] = useState('')
@@ -14,13 +7,7 @@ export function useTutorSession() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [connection, setConnection] = useState('checking')
   const messageSequence = useRef(0)
-  const restoreController = useRef(null)
-  const [sessionId, setSessionId] = useState(
-    () => window.localStorage.getItem(SESSION_STORAGE_KEY),
-  )
-  const [isRestoring, setIsRestoring] = useState(
-    () => Boolean(window.localStorage.getItem(SESSION_STORAGE_KEY)),
-  )
+  const sessionId = useRef(crypto.randomUUID())
 
   function createMessageId() {
     messageSequence.current += 1
@@ -28,58 +15,20 @@ export function useTutorSession() {
   }
 
   useEffect(() => {
-    const healthController = new AbortController()
+    const controller = new AbortController()
 
-    checkTutorHealth(healthController.signal)
+    checkTutorHealth(controller.signal)
       .then(() => setConnection('connected'))
       .catch(() => {
-        if (!healthController.signal.aborted) setConnection('disconnected')
+        if (!controller.signal.aborted) setConnection('disconnected')
       })
 
-    const storedSessionId = window.localStorage.getItem(SESSION_STORAGE_KEY)
-    if (!storedSessionId) {
-      return () => healthController.abort()
-    }
-
-    const sessionController = new AbortController()
-    restoreController.current = sessionController
-    getTutorSession(storedSessionId, sessionController.signal)
-      .then((history) => {
-        if (sessionController.signal.aborted) return
-        setMessages(
-          history.map((message) => ({
-            id: createMessageId(),
-            role: message.role,
-            content: message.content,
-          })),
-        )
-      })
-      .catch((restoreError) => {
-        if (sessionController.signal.aborted) return
-        if (restoreError.status === 404) {
-          window.localStorage.removeItem(SESSION_STORAGE_KEY)
-          setSessionId(null)
-        } else {
-          setConnection('disconnected')
-        }
-      })
-      .finally(() => {
-        if (!sessionController.signal.aborted) setIsRestoring(false)
-      })
-
-    return () => {
-      healthController.abort()
-      sessionController.abort()
-    }
+    return () => controller.abort()
   }, [])
 
   async function askQuestion(question = prompt, { addQuestion = true } = {}) {
     const cleanedPrompt = question.trim()
     if (!cleanedPrompt || isSubmitting) return
-
-    restoreController.current?.abort()
-    restoreController.current = null
-    setIsRestoring(false)
 
     if (addQuestion) {
       setMessages((currentMessages) => [
@@ -92,12 +41,10 @@ export function useTutorSession() {
     setIsSubmitting(true)
 
     try {
-      const result = await requestTutorAnswer(cleanedPrompt, sessionId)
-      setSessionId(result.sessionId)
-      window.localStorage.setItem(SESSION_STORAGE_KEY, result.sessionId)
+      const answer = await requestTutorAnswer(cleanedPrompt, sessionId.current)
       setMessages((currentMessages) => [
         ...currentMessages,
-        { id: createMessageId(), role: 'assistant', content: result.text },
+        { id: createMessageId(), role: 'assistant', content: answer },
       ])
     } catch (requestError) {
       const message =
@@ -119,28 +66,10 @@ export function useTutorSession() {
     }
   }
 
-  async function resetSession() {
-    if (isSubmitting || isRestoring) return
-    setIsSubmitting(true)
-
-    try {
-      if (sessionId) await clearTutorSession(sessionId)
-      window.localStorage.removeItem(SESSION_STORAGE_KEY)
-      setSessionId(null)
-      setPrompt('')
-      setMessages([])
-    } catch (clearError) {
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        {
-          id: createMessageId(),
-          role: 'error',
-          content: clearError.message || 'Could not clear this session. Please try again.',
-        },
-      ])
-    } finally {
-      setIsSubmitting(false)
-    }
+  function resetSession() {
+    setPrompt('')
+    setMessages([])
+    sessionId.current = crypto.randomUUID()
   }
 
   function retryQuestion(errorMessageId, question) {
@@ -153,7 +82,6 @@ export function useTutorSession() {
   return {
     askQuestion,
     connection,
-    isReady: !isRestoring,
     isSubmitting,
     messages,
     prompt,

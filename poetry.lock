@@ -499,13 +499,13 @@ urllib3 = ["packaging (>=20.0)", "urllib3 (>=1.26.15,<3.0.0)"]
 
 [[package]]
 name = "google-genai"
-version = "2.26.0"
+version = "2.28.0"
 description = "GenAI Python SDK"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "google_genai-2.26.0-py3-none-any.whl", hash = "sha256:a9d963900d12c6dee8fb730c87c64d06b8a29c1e3d649137d4b89560c3424776"},
-    {file = "google_genai-2.26.0.tar.gz", hash = "sha256:77bb207d535fc84934b42f95db35267df40fea7244b824e91daf2e7940358db3"},
+    {file = "google_genai-2.28.0-py3-none-any.whl", hash = "sha256:cdee15e2fbfea08ea61bce6e5bfbb3301db4bd13a52dccfa8c8d1167e37ca1cc"},
+    {file = "google_genai-2.28.0.tar.gz", hash = "sha256:970cb2eaf1951949851c3e0a5b70265cfea8a408fb7361c7c980a84d90672bf2"},
 ]
 
 [package.dependencies]
@@ -785,13 +785,13 @@ websockets = ">=14,<17"
 
 [[package]]
 name = "langsmith"
-version = "0.14.2"
+version = "0.14.4"
 description = "Client library to connect to the LangSmith Observability and Evaluation Platform."
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "langsmith-0.14.2-py3-none-any.whl", hash = "sha256:9e3dda3df013514b919acf3b147fcecc1758b8ef04a764b6cb61052991617ee2"},
-    {file = "langsmith-0.14.2.tar.gz", hash = "sha256:2df33ebe2ff20461b1f818895b8f15cbfd6e5b95be9d9e754ab3045cc6fe6f53"},
+    {file = "langsmith-0.14.4-py3-none-any.whl", hash = "sha256:ae0d98c2b0f9292ef7e12451d480937d79a0e7dcf2412ba847de6f053391b44a"},
+    {file = "langsmith-0.14.4.tar.gz", hash = "sha256:a340199fcd2af60358f09dd1d7011bf7282f0d46a98aaa101bc7a521746da764"},
 ]
 
 [package.dependencies]
@@ -1976,4 +1976,4 @@ cffi = ["cffi (>=1.17,<2.0)", "cffi (>=2.0.0b)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "f9fcce13a1ff3cff26b8f1e489687d62c26210327f6e7b2136cb2034d60d339d"
+content-hash = "f5742c8ffc3c5c9ad2d76098c502aae4df46fc6911c2441102c7c8a8f88f29fa"

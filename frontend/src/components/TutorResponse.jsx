@@ -43,7 +43,7 @@ function TutorResponse({ messages, isSubmitting, onRetry }) {
               ) : (
                 <p className="message-content">{message.content}</p>
               )}
-              {message.role === 'error' && message.retryPrompt && (
+              {message.role === 'error' && (
                 <button
                   className="retry-button"
                   type="button"
