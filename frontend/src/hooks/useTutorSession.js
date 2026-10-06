@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import {
   checkTutorHealth,
   clearTutorSession,
+  getSessionDocument,
   requestTutorAnswer,
   requestTutorFollowUp,
+  uploadTutorDocument,
 } from '../services/tutorApi.js'
 
 const SESSION_ID_KEY = 'ai-tutor.session-id'
@@ -46,6 +48,11 @@ export function useTutorSession() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [connection, setConnection] = useState('checking')
   const [sessionNotice, setSessionNotice] = useState('')
+  const [documentStatus, setDocumentStatus] = useState('checking')
+  const [documentName, setDocumentName] = useState('')
+  const [documentError, setDocumentError] = useState('')
+  const [documentUploadError, setDocumentUploadError] = useState('')
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false)
   const [sessionId, setSessionId] = useState(getOrCreateSessionId)
   const messageSequence = useRef(0)
 
@@ -76,6 +83,8 @@ export function useTutorSession() {
           setSessionId(nextSessionId)
           setMessages([])
           setPrompt('')
+          setDocumentStatus('checking')
+          setDocumentError('')
         }
         window.localStorage.setItem(
           SERVER_INSTANCE_ID_KEY,
@@ -89,6 +98,26 @@ export function useTutorSession() {
 
     return () => controller.abort()
   }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    getSessionDocument(sessionId, controller.signal)
+      .then((status) => {
+        setDocumentStatus(status.processing_status)
+        setDocumentName(status.original_filename || '')
+        setDocumentError(status.processing_error || '')
+        setDocumentUploadError('')
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setDocumentStatus('unavailable')
+          setDocumentError(error.message || 'Document status is unavailable.')
+        }
+      })
+
+    return () => controller.abort()
+  }, [sessionId])
 
   async function askQuestion(question = prompt, { addQuestion = true } = {}) {
     const cleanedPrompt = question.trim()
@@ -188,6 +217,44 @@ export function useTutorSession() {
     }
   }
 
+  async function uploadDocument(file) {
+    if (isUploadingDocument || !file) return
+
+    setIsUploadingDocument(true)
+    setDocumentStatus('PROCESSING')
+    setDocumentName(file.name)
+    setDocumentError('')
+    setDocumentUploadError('')
+    try {
+      const result = await uploadTutorDocument(file, sessionId)
+      setDocumentStatus('READY')
+      setDocumentName(result.metadata.original_filename)
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          content: `Your document **${result.metadata.original_filename}** is ready. You can ask questions about it.`,
+        },
+      ])
+    } catch (error) {
+      setDocumentUploadError(
+        error.message || 'The document could not be prepared.',
+      )
+      try {
+        const status = await getSessionDocument(sessionId)
+        setDocumentStatus(status.processing_status)
+        setDocumentName(status.original_filename || '')
+        setDocumentError(status.processing_error || '')
+      } catch {
+        setDocumentStatus('unavailable')
+        setDocumentError('Could not confirm document processing status.')
+      }
+    } finally {
+      setIsUploadingDocument(false)
+    }
+  }
+
   async function resetSession() {
     const previousSessionId = sessionId
     const nextSessionId = crypto.randomUUID()
@@ -195,6 +262,10 @@ export function useTutorSession() {
     setMessages([])
     setSessionId(nextSessionId)
     setSessionNotice('')
+    setDocumentStatus('EMPTY')
+    setDocumentName('')
+    setDocumentError('')
+    setDocumentUploadError('')
     window.localStorage.setItem(SESSION_ID_KEY, nextSessionId)
     window.localStorage.removeItem(CHAT_MESSAGES_KEY)
 
@@ -218,12 +289,18 @@ export function useTutorSession() {
   return {
     askQuestion,
     connection,
+    documentError,
+    documentName,
+    documentStatus,
+    documentUploadError,
     isSubmitting,
+    isUploadingDocument,
     messages,
     prompt,
     requestFollowUp,
     retryQuestion,
     resetSession,
+    uploadDocument,
     sessionNotice,
     setPrompt,
     followUpAvailable: messages.some(

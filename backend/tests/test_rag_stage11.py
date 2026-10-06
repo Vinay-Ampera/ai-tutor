@@ -13,6 +13,7 @@ import numpy as np
 from dotenv import load_dotenv
 from docx import Document
 
+from app.graphs.tutor_graph import run_tutor_graph
 from app.services import document_ingestion
 from app.services.rag import embeddings
 from app.services.rag.chunking import chunk_markdown
@@ -218,6 +219,19 @@ class PostgresStoreTests(unittest.TestCase):
         self.assertIn("USING hnsw", executed_sql)
         self.assertIn("vector_cosine_ops", executed_sql)
 
+    def test_latest_document_lookup_only_selects_indexed_records(self) -> None:
+        self.cursor.fetchone.return_value = None
+        with patch(
+            "app.services.rag.postgres_store.connect_database",
+            return_value=self.connection,
+        ):
+            result = postgres_store.latest_indexed_document()
+
+        self.assertIsNone(result)
+        query = self.cursor.execute.call_args.args[0]
+        self.assertIn("processing_status IN ('INDEXED', 'READY')", query)
+        self.assertIn("ORDER BY indexed_at DESC", query)
+
     def test_stores_and_verifies_document_chunks_and_metadata(self) -> None:
         self.cursor.fetchone.side_effect = [
             {"exists": True},
@@ -379,12 +393,32 @@ class PostgresEndToEndTests(unittest.TestCase):
                     document_id=result.document_id,
                     limit=1,
                 )
+                with patch(
+                    "app.services.gemini.generate_text",
+                    side_effect=[
+                        json.dumps(
+                            {
+                                "request_category": "educational",
+                                "is_greeting": False,
+                                "is_educational": True,
+                            }
+                        ),
+                        "The document says BGE stores the verification phrase.",
+                    ],
+                ):
+                    graph_result = run_tutor_graph(
+                        "According to the uploaded document, what does BGE store?",
+                        session_id=f"stage12-{uuid4().hex}",
+                    )
                 self.assertEqual(result.embedding_dimension, EMBEDDING_DIMENSION)
                 self.assertEqual(result.processing_status, "INDEXED")
                 self.assertGreaterEqual(result.chunk_count, 1)
                 self.assertEqual(len(matches), 1)
                 self.assertIn("BGE stores this verification phrase", matches[0]["content"])
                 self.assertEqual(matches[0]["metadata"]["heading"], "Verification section")
+                self.assertIn("BGE stores the verification phrase", graph_result["response"])
+                self.assertEqual(graph_result["document_id"], result.document_id)
+                self.assertTrue(graph_result["retrieved_chunks"])
             finally:
                 if result is not None:
                     with connect_database() as connection:

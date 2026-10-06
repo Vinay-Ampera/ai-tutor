@@ -17,7 +17,8 @@ Return exactly one JSON object with these keys:
 Use "educational" for requests to learn about, understand, define, compare, solve, or get
 instruction on a concept, skill, or subject. This includes foundational and advanced
 academic, technical, and professional learning topics; do not require the topic to appear
-in a fixed list of subjects. A greeting with a learning question is educational. Use
+in a fixed list of subjects. Questions asking to explain or find information in an uploaded
+educational document are also educational. A greeting with a learning question is educational. Use
 "greeting" only for a greeting without a learning question. Use "out_of_scope" for
 requests to perform unrelated practical or commercial work, provide recipes, create
 unrelated fiction, or other non-learning tasks. For mixed requests, classify as educational
@@ -34,6 +35,7 @@ Examples:
 - "Explain how a mathematical proof works." → educational, false, true
 - "Compare two approaches to sorting data." → educational, false, true
 - "Hi, what is a programming language?" → educational, false, true
+- "According to the uploaded notes, how does photosynthesis work?" → educational, false, true
 - "Write a sales proposal for my company." → out_of_scope, false, false
 - "Give me a pasta recipe." → out_of_scope, false, false
 - "Hi" → greeting, true, false

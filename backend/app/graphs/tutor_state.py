@@ -1,4 +1,5 @@
 from typing import Literal, TypedDict
+from uuid import UUID
 
 
 RequestCategory = Literal["greeting", "educational", "out_of_scope"]
@@ -9,6 +10,12 @@ TutorAction = Literal[
     "quiz",
     "evaluate_quiz",
 ]
+
+
+class RetrievedChunk(TypedDict):
+    content: str
+    metadata: dict[str, object]
+    similarity: float
 
 
 class TutorState(TypedDict):
@@ -27,6 +34,10 @@ class TutorState(TypedDict):
     teaching_approach: str | None
     explanation: str | None
     example: str | None
+    is_document_question: bool
+    document_id: UUID | None
+    document_name: str | None
+    retrieved_chunks: list[RetrievedChunk]
     requested_action: TutorAction
     quiz_question: str | None
     expected_quiz_answer: str | None

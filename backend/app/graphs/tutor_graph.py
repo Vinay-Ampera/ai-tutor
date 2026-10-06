@@ -18,6 +18,11 @@ from app.graphs.conversation_nodes import (
     route_after_identity,
 )
 from app.graphs.followup_nodes import explain_more, generate_another_example
+from app.graphs.retrieval_nodes import (
+    check_document_readiness,
+    generate_document_answer,
+    retrieve_document_context,
+)
 from app.graphs.teaching_nodes import (
     generate_example,
     generate_explanation,
@@ -44,6 +49,9 @@ def build_tutor_graph():
     graph.add_node("another_example", generate_another_example)
     graph.add_node("quiz", generate_quiz)
     graph.add_node("quiz_evaluation", evaluate_quiz_answer)
+    graph.add_node("document_readiness", check_document_readiness)
+    graph.add_node("document_retrieval", retrieve_document_context)
+    graph.add_node("document_answer", generate_document_answer)
 
     graph.add_edge(START, "check_identity")
     graph.add_conditional_edges(
@@ -87,7 +95,24 @@ def build_tutor_graph():
             "another_example": "another_example",
             "quiz": "quiz",
             "quiz_evaluation": "quiz_evaluation",
+            "document_readiness": "document_readiness",
             "out_of_scope": "out_of_scope_response",
+        },
+    )
+    graph.add_conditional_edges(
+        "document_readiness",
+        lambda state: state["next_action"],
+        {
+            "document_not_ready": END,
+            "document_retrieval": "document_retrieval",
+        },
+    )
+    graph.add_conditional_edges(
+        "document_retrieval",
+        lambda state: state["next_action"],
+        {
+            "document_answer": "document_answer",
+            "document_not_found": END,
         },
     )
     graph.add_edge("teaching_approach", "explanation")
@@ -99,6 +124,7 @@ def build_tutor_graph():
     graph.add_edge("another_example", END)
     graph.add_edge("quiz", END)
     graph.add_edge("quiz_evaluation", END)
+    graph.add_edge("document_answer", END)
     return graph.compile()
 
 
@@ -143,6 +169,10 @@ def run_tutor_graph(
         "teaching_approach": context.get("teaching_approach"),
         "explanation": context.get("explanation"),
         "example": context.get("example"),
+        "is_document_question": False,
+        "document_id": None,
+        "document_name": None,
+        "retrieved_chunks": [],
         "next_action": "scope_check",
         "response": "",
     }

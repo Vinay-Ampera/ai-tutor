@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, model_validator
 
 from app.graphs.generation_support import parse_json_response
 from app.graphs.conversation_nodes import OUT_OF_SCOPE_RESPONSE
+from app.graphs.retrieval_nodes import is_document_question
 from app.graphs.tutor_prompts import SCOPE_CLASSIFICATION_PROMPT
 from app.graphs.tutor_state import TutorState
 from app.services import gemini
@@ -69,6 +70,11 @@ def classify_scope(state: TutorState) -> dict[str, str | bool]:
         "request_category": classification.request_category,
         "is_greeting": classification.is_greeting,
         "is_educational": classification.is_educational,
+        "is_document_question": (
+            classification.request_category == "educational"
+            and state["requested_action"] == "teach"
+            and is_document_question(state["user_question"])
+        ),
         "next_action": classification.request_category,
     }
 
@@ -77,6 +83,8 @@ def route_after_classification(state: TutorState) -> str:
     category = state["request_category"]
     if category != "educational":
         return category or "out_of_scope"
+    if state["requested_action"] == "teach" and state.get("is_document_question"):
+        return "document_readiness"
     return {
         "teach": "teaching_approach",
         "explain_more": "explain_more",

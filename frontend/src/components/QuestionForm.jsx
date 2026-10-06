@@ -54,7 +54,7 @@ function QuestionForm({
           id="question-input"
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
-          placeholder="For example, why do Python loops stop at range(5)?"
+          placeholder="Type here.."
           maxLength={2000}
           rows={4}
           disabled={isSubmitting}

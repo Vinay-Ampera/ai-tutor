@@ -530,36 +530,32 @@ Generate a grounded answer
 
 Normal tutor behavior must continue when no document is loaded. Keep identity, greeting, educational-scope, and out-of-scope protections in the existing LangGraph flow and apply them before retrieval and generation. LangGraph owns workflow orchestration, state, routing, and conditional decisions; Gemini understands language and generates the answer. For document questions, Gemini must use retrieved context and clearly say when the document does not contain enough information rather than inventing an answer.
 
+For an educational document question, first confirm that the active document for the current chat session has status `READY` (set only after its chunks and vectors are verified). If there is no ready document, return a clear not-ready response without embedding or searching. Embed the query using the same local BGE model, retrieve up to five chunks from that document, and pass only those evidence chunks to Gemini. Document references must not bypass identity or scope classification. Stage 13 completes the session-scoped ready state and upload UX.
+
 ### Completion condition
 
-Tests verify normal tutor routing without a document, guarded document retrieval with a ready document, and a clear “not found in the document” response when retrieved context is insufficient.
+Tests verify normal tutor routing without a document, guarded document retrieval with a ready document, and a clear “not found in the document” response when retrieved context is insufficient. Live integration verifies the Stage 10 Markdown → pgvector → existing LangGraph retrieval path.
 
 ---
 
-# Stage 13 — Document Ready State & RAG UX
+# Stage 13 — Document Ready State & RAG UX: Complete
 
-## Goal
-
-Do not allow document questions to enter retrieval just because a file was selected or uploaded. A document becomes READY only after:
+The existing tutor page and transcript remain the single chat. `POST /api/documents/upload` accepts the session ID and supported file, then orchestrates format-specific parsing, timestamped Markdown, structure-aware chunking, local BGE embeddings, PostgreSQL + pgvector storage, and vector verification. It returns `READY` only after the verified write; failures are persisted as `FAILED` and returned clearly. The `GET /api/sessions/{session_id}/document` endpoint restores the active document status after refresh. The database keeps one active document per session, and LangGraph retrieves only that session's `READY` document after the existing identity, conversation, and scope checks.
 
 ```text
-Upload
- → Parse
- → Markdown
- → Chunk
- → Embedding
- → Vector DB indexing
- → Successful verification
- → READY
+One existing chat session
+ → upload and validate
+ → parse and save Markdown
+ → chunk and embed locally
+ → persist and verify in pgvector
+ → READY and notify in the same chat
 ```
 
-After successful indexing, tell the user: “Your document is loaded. You can now ask questions about it.”
-
-Before READY, normal tutor questions continue to work, document questions are not sent to retrieval, and the user receives a clear processing/not-ready message. After READY, document questions use RAG while normal educational questions continue through the normal tutor path. The initial scope is one active document per session unless the existing project already has a different document model.
+The tutor UI shows processing, ready, failed, and unavailable states alongside its existing conversation. It appends a ready notification only after indexing verification. Normal educational questions continue through the original tutor flow during processing and after readiness; document questions use the session's ready document, and a missing or failed document returns a clear response without retrieval. Retrieved evidence remains isolated to document questions and Gemini is instructed to answer only from that evidence. One active document is supported per session. Focused tests cover upload orchestration, failure/readiness status, guarded routing, normal tutoring, and document retrieval. A live PostgreSQL + BGE integration test verifies upload through grounded graph response.
 
 ### Completion condition
 
-The UI and backend expose processing/not-ready and READY behavior accurately; document retrieval is blocked until indexing has been verified, and the ready message is sent only after that verification.
+Complete: upload → Markdown → semantic chunks → BGE embeddings → verified pgvector storage → READY → same-chat notification and session-scoped retrieval works; failures and not-ready states do not reach retrieval. The existing tutor behavior and same-chat continuity remain intact. Stage 14 and later stages are not implemented here.
 
 ---
 

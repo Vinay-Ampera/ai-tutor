@@ -1,14 +1,20 @@
 import QuestionForm from '../components/QuestionForm.jsx'
 import PageFooter from '../components/PageFooter.jsx'
 import TutorResponse from '../components/TutorResponse.jsx'
+import DocumentUpload from '../components/DocumentUpload.jsx'
 import './TutorPage.css'
 
 function TutorPage({ isActive, tutorSession }) {
   const {
     askQuestion,
     connection,
+    documentError,
+    documentName,
+    documentStatus,
+    documentUploadError,
     followUpAvailable,
     isSubmitting,
+    isUploadingDocument,
     messages,
     prompt,
     requestFollowUp,
@@ -16,6 +22,7 @@ function TutorPage({ isActive, tutorSession }) {
     resetSession,
     sessionNotice,
     setPrompt,
+    uploadDocument,
   } = tutorSession
 
   return (
@@ -27,7 +34,7 @@ function TutorPage({ isActive, tutorSession }) {
             <h1 id="question-title">Ask your tutor</h1>
           </div>
           {messages.length > 0 && (
-            <button className="text-button" type="button" onClick={resetSession} disabled={isSubmitting}>
+            <button className="text-button" type="button" onClick={resetSession} disabled={isSubmitting || isUploadingDocument}>
               Start over
             </button>
           )}
@@ -45,6 +52,15 @@ function TutorPage({ isActive, tutorSession }) {
         {sessionNotice && (
           <p className="session-notice" role="status">{sessionNotice}</p>
         )}
+        <DocumentUpload
+          documentError={documentError}
+          documentName={documentName}
+          documentStatus={documentStatus}
+          documentUploadError={documentUploadError}
+          isUploading={isUploadingDocument}
+          isReady={connection !== 'checking'}
+          onUpload={uploadDocument}
+        />
         <QuestionForm
           isReady={connection !== 'checking'}
           isSubmitting={isSubmitting}

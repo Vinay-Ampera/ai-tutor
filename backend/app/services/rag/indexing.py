@@ -23,7 +23,12 @@ class IndexingResult:
     processing_status: str
 
 
-def index_stage10_markdown(markdown_filename: str) -> IndexingResult:
+def index_stage10_markdown(
+    markdown_filename: str,
+    *,
+    document_id: UUID | None = None,
+    ready_status: str = "INDEXED",
+) -> IndexingResult:
     source = load_stage10_markdown(markdown_filename)
     chunks = chunk_markdown(
         source.content,
@@ -33,11 +38,21 @@ def index_stage10_markdown(markdown_filename: str) -> IndexingResult:
         raise ValueError("No indexable text was found in the Markdown document.")
 
     vectors = embed_texts([chunk.content for chunk in chunks])
-    document_id, stored_chunk_count = store_document_chunks(
-        source,
-        [(chunk.content, chunk.metadata()) for chunk in chunks],
-        vectors,
-    )
+    stored_chunks = [(chunk.content, chunk.metadata()) for chunk in chunks]
+    if document_id is None and ready_status == "INDEXED":
+        document_id, stored_chunk_count = store_document_chunks(
+            source,
+            stored_chunks,
+            vectors,
+        )
+    else:
+        document_id, stored_chunk_count = store_document_chunks(
+            source,
+            stored_chunks,
+            vectors,
+            document_id=document_id,
+            ready_status=ready_status,
+        )
     return IndexingResult(
         document_id=document_id,
         original_filename=source.original_filename,
@@ -46,5 +61,5 @@ def index_stage10_markdown(markdown_filename: str) -> IndexingResult:
         markdown_path=source.markdown_path,
         chunk_count=stored_chunk_count,
         embedding_dimension=EMBEDDING_DIMENSION,
-        processing_status="INDEXED",
+        processing_status=ready_status,
     )

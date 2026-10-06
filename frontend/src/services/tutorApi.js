@@ -26,6 +26,44 @@ export async function clearTutorSession(sessionId) {
   await readResponse(response)
 }
 
+export async function getSessionDocument(sessionId, signal) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/sessions/${encodeURIComponent(sessionId)}/document`,
+    { signal },
+  )
+  const result = await readResponse(response)
+  if (
+    typeof result.processing_status !== 'string' ||
+    !['EMPTY', 'PROCESSING', 'INDEXING', 'READY', 'INDEXED', 'FAILED'].includes(
+      result.processing_status,
+    )
+  ) {
+    throw new Error('The tutor returned an invalid document status.')
+  }
+  return result
+}
+
+export async function uploadTutorDocument(file, sessionId) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('session_id', sessionId)
+
+  const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+    method: 'POST',
+    body: formData,
+  })
+  const result = await readResponse(response)
+  if (
+    typeof result.document_id !== 'string' ||
+    result.processing_status !== 'READY' ||
+    typeof result.message !== 'string' ||
+    !result.message.trim()
+  ) {
+    throw new Error('The document was not confirmed ready by the tutor service.')
+  }
+  return result
+}
+
 export async function requestTutorAnswer(prompt, sessionId) {
   const response = await fetch(`${API_BASE_URL}/api/gemini/generate`, {
     method: 'POST',

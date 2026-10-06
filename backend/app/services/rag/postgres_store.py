@@ -89,13 +89,31 @@ def ensure_rag_schema(connection: psycopg.Connection) -> None:
                 owner_id UUID NULL,
                 original_filename TEXT NOT NULL,
                 source_format TEXT NOT NULL,
-                markdown_filename TEXT NOT NULL,
-                markdown_path TEXT NOT NULL UNIQUE,
+                markdown_filename TEXT,
+                markdown_path TEXT UNIQUE,
                 uploaded_at TIMESTAMPTZ NOT NULL,
                 processing_status TEXT NOT NULL DEFAULT 'INDEXED',
+                session_id TEXT,
+                processing_error TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 indexed_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
+            """
+        )
+        cursor.execute(
+            """
+            ALTER TABLE rag_documents
+                ALTER COLUMN markdown_filename DROP NOT NULL,
+                ALTER COLUMN markdown_path DROP NOT NULL,
+                ADD COLUMN IF NOT EXISTS session_id TEXT,
+                ADD COLUMN IF NOT EXISTS processing_error TEXT
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS rag_documents_session_id_idx
+            ON rag_documents (session_id)
+            WHERE session_id IS NOT NULL
             """
         )
         cursor.execute(
@@ -133,6 +151,9 @@ def store_document_chunks(
     source: MarkdownSource,
     chunks: list[tuple[str, dict[str, object]]],
     embeddings: list[list[float]],
+    *,
+    document_id: UUID | None = None,
+    ready_status: str = "INDEXED",
 ) -> tuple[UUID, int]:
     if len(chunks) != len(embeddings) or not chunks:
         raise ValueError("Every stored chunk must have exactly one embedding.")
@@ -145,11 +166,21 @@ def store_document_chunks(
         with connect_database() as connection:
             ensure_rag_schema(connection)
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT id FROM rag_documents WHERE markdown_path = %s",
-                    (source.markdown_path,),
-                )
+                if document_id is None:
+                    cursor.execute(
+                        "SELECT id FROM rag_documents WHERE markdown_path = %s",
+                        (source.markdown_path,),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT id FROM rag_documents WHERE id = %s",
+                        (document_id,),
+                    )
                 existing = cursor.fetchone()
+                if document_id is not None and existing is None:
+                    raise DatabasePersistenceError(
+                        "The document processing record no longer exists."
+                    )
                 document_id = existing["id"] if existing else uuid4()
                 if existing:
                     cursor.execute(
@@ -158,8 +189,10 @@ def store_document_chunks(
                         SET original_filename = %s,
                             source_format = %s,
                             markdown_filename = %s,
+                            markdown_path = %s,
                             uploaded_at = %s,
                             processing_status = 'INDEXING',
+                            processing_error = NULL,
                             indexed_at = now()
                         WHERE id = %s
                         """,
@@ -167,6 +200,7 @@ def store_document_chunks(
                             source.original_filename,
                             source.source_format,
                             source.markdown_filename,
+                            source.markdown_path,
                             source.uploaded_at,
                             document_id,
                         ),
@@ -180,9 +214,9 @@ def store_document_chunks(
                         """
                         INSERT INTO rag_documents (
                             id, original_filename, source_format, markdown_filename,
-                            markdown_path, uploaded_at, processing_status
+                            markdown_path, uploaded_at, processing_status, session_id
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, 'INDEXING')
+                        VALUES (%s, %s, %s, %s, %s, %s, 'INDEXING', NULL)
                         """,
                         (
                             document_id,
@@ -236,10 +270,11 @@ def store_document_chunks(
                 cursor.execute(
                     """
                     UPDATE rag_documents
-                    SET processing_status = 'INDEXED', indexed_at = now()
+                    SET processing_status = %s, processing_error = NULL,
+                        indexed_at = now()
                     WHERE id = %s
                     """,
-                    (document_id,),
+                    (ready_status, document_id),
                 )
         return document_id, len(chunks)
     except psycopg.Error as error:
@@ -249,6 +284,128 @@ def store_document_chunks(
         )
         raise DatabasePersistenceError(
             "PostgreSQL failed while saving or verifying document chunks."
+        ) from error
+
+
+def start_session_document_processing(
+    session_id: str,
+    original_filename: str,
+    source_format: str,
+) -> UUID:
+    document_id = uuid4()
+    try:
+        with connect_database() as connection:
+            ensure_rag_schema(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM rag_documents WHERE session_id = %s",
+                    (session_id,),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO rag_documents (
+                        id, session_id, original_filename, source_format,
+                        uploaded_at, processing_status
+                    )
+                    VALUES (%s, %s, %s, %s, now(), 'PROCESSING')
+                    """,
+                    (document_id, session_id, original_filename, source_format),
+                )
+        return document_id
+    except psycopg.Error as error:
+        logger.error(
+            "Could not start document processing in PostgreSQL (%s).",
+            type(error).__name__,
+        )
+        raise DatabasePersistenceError(
+            "PostgreSQL failed while starting document processing."
+        ) from error
+
+
+def mark_session_document_failed(document_id: UUID, reason: str) -> None:
+    try:
+        with connect_database() as connection:
+            ensure_rag_schema(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag_documents
+                    SET processing_status = 'FAILED', processing_error = %s
+                    WHERE id = %s
+                    """,
+                    (reason[:1000], document_id),
+                )
+    except psycopg.Error as error:
+        logger.error(
+            "Could not record failed document processing (%s).",
+            type(error).__name__,
+        )
+        raise DatabasePersistenceError(
+            "PostgreSQL failed while recording the document processing error."
+        ) from error
+
+
+def session_document_status(session_id: str) -> dict[str, object] | None:
+    try:
+        with connect_database() as connection:
+            ensure_rag_schema(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, original_filename, processing_status,
+                           processing_error, markdown_filename, indexed_at
+                    FROM rag_documents
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                )
+                return cursor.fetchone()
+    except psycopg.Error as error:
+        logger.error(
+            "Could not look up session document status (%s).",
+            type(error).__name__,
+        )
+        raise DatabasePersistenceError(
+            "PostgreSQL failed while checking document processing status."
+        ) from error
+
+
+def latest_indexed_document(
+    session_id: str | None = None,
+) -> dict[str, object] | None:
+    try:
+        with connect_database() as connection:
+            with connection.cursor() as cursor:
+                if session_id is None:
+                    cursor.execute(
+                        """
+                        SELECT id, original_filename, markdown_filename
+                        FROM rag_documents
+                        WHERE processing_status IN ('INDEXED', 'READY')
+                        ORDER BY indexed_at DESC, created_at DESC
+                        LIMIT 1
+                        """
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT id, original_filename, markdown_filename
+                        FROM rag_documents
+                        WHERE session_id = %s
+                          AND processing_status = 'READY'
+                        ORDER BY indexed_at DESC, created_at DESC
+                        LIMIT 1
+                        """,
+                        (session_id,),
+                    )
+                return cursor.fetchone()
+    except psycopg.Error as error:
+        logger.error(
+            "Could not look up indexed documents in PostgreSQL (%s).",
+            type(error).__name__,
+        )
+        raise DatabasePersistenceError(
+            "PostgreSQL failed while checking for an indexed document."
         ) from error
 
 
@@ -283,11 +440,14 @@ def search_similar_chunks(
                 else:
                     cursor.execute(
                         """
-                        SELECT document_id, content, metadata,
+                        SELECT chunks.document_id, chunks.content, chunks.metadata,
                                1 - (embedding <=> %s) AS similarity
-                        FROM rag_document_chunks
-                        WHERE document_id = %s
-                        ORDER BY embedding <=> %s
+                        FROM rag_document_chunks AS chunks
+                        JOIN rag_documents AS documents
+                          ON documents.id = chunks.document_id
+                        WHERE chunks.document_id = %s
+                          AND documents.processing_status IN ('INDEXED', 'READY')
+                        ORDER BY chunks.embedding <=> %s
                         LIMIT %s
                         """,
                         (

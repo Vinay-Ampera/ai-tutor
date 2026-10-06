@@ -165,9 +165,8 @@ Responsible for:
 - Generating quiz questions
 - Evaluating quiz answers
 - Generating grounded answers from retrieved document context
-- Creating document and query embeddings with local `BAAI/bge-small-en-v1.5`
 
-The model generates or classifies content only when LangGraph routes to it. It must not choose or override application routing. LangGraph retains workflow orchestration, state, routing, and conditional decisions; Gemini provides language understanding, teaching, embeddings when requested by the workflow, and grounded response generation. All user-facing generated content must follow the shared AI Tutor profile and education-only boundary.
+The model generates or classifies content only when LangGraph routes to it. It must not choose or override application routing. LangGraph retains workflow orchestration, state, routing, and conditional decisions; Gemini provides language understanding, teaching, and grounded response generation. Local `sentence-transformers` BGE code generates the document and query embeddings. All user-facing generated content must follow the shared AI Tutor profile and education-only boundary.
 
 ---
 
@@ -264,7 +263,9 @@ Upload → Parse → Markdown → Chunk → Embedding → Vector DB indexing
        → successful verification → READY
 ```
 
-Only a verified indexed document is READY. Before then, normal tutor questions remain available, document questions receive a clear processing/not-ready response and are not sent to retrieval, and the user is told when processing has failed rather than being shown a success state. Once READY, show: “Your document is loaded. You can now ask questions about it.” Initially allow one active document per session unless the existing project already has a different document model.
+Only a verified indexed document is READY. Before then, normal tutor questions remain available, document questions receive a clear processing/not-ready response and are not sent to retrieval, and the user is told when processing has failed rather than being shown a success state. Once READY, show: “Your document is ready. You can ask questions about it.” Initially allow one active document per session.
+
+Stage 13 is implemented in the existing continuous chat. `POST /api/documents/upload` accepts the active `session_id` and file, then runs parsing, Markdown creation, chunking, embedding, PostgreSQL persistence, and vector verification as one backend flow. It returns READY only after verification; failures are recorded as FAILED. `GET /api/sessions/{session_id}/document` restores status after refresh. LangGraph resolves readiness against that session's active document, so another session's document cannot be retrieved. The React upload control, processing/failure/ready status, and ready notification are part of the existing tutor page and transcript, not a second chatbot.
 
 ---
 
@@ -454,7 +455,7 @@ Prepend the shared AI Tutor profile. Evaluate only the submitted educational qui
 
 LangGraph first preserves the existing identity, greeting, and educational-scope protections. It then chooses the normal tutor path or, for a document-related educational question with a READY active document, the retrieval path. If the document is processing or otherwise not READY, return a clear application-owned not-ready response without querying the vector database.
 
-On the retrieval path, create a query embedding with the same local `BAAI/bge-small-en-v1.5` model used to embed document chunks, retrieve relevant chunks from PostgreSQL + pgvector, and pass those chunks as context to Gemini. Gemini generates the grounded answer; LangGraph remains the workflow controller. If retrieved context is insufficient, the answer must clearly state that the requested information could not be found in the document.
+On the retrieval path, first require the current session's active document to be `READY` (set only after its chunks and vectors are verified). If it is processing, failed, or absent, return a clear status response without embedding or searching. Create a query embedding with the same local `BAAI/bge-small-en-v1.5` model used for its chunks, retrieve up to five chunks from that session's document in PostgreSQL + pgvector, and pass only those chunks as evidence to Gemini. Gemini generates the grounded answer; LangGraph remains the workflow controller. If retrieved context is empty or insufficient, clearly state that the requested information could not be found in the document. Identity, greeting, and scope checks happen before retrieval. Stage 13's session-scoped readiness and UX are complete; there is no separate RAG chat.
 
 ---
 
@@ -666,7 +667,7 @@ Only displayed when the learner chooses Quiz.
 
 ### Document upload and readiness
 
-Document upload and processing status are part of Stages 10–13. Accept the supported PDF, DOCX, XLS, and XLSX files; show a clear processing/not-ready state while parsing and indexing; and show the loaded message only after indexing has been verified. Do not route document questions to retrieval before READY. Keep normal tutor questions available during processing and after readiness. Initially show one active document per session unless the existing project already uses a different document model.
+Document upload and processing status are part of Stages 10–13. `POST /api/documents/upload` accepts PDF, DOCX, XLS, or XLSX and the active session ID, then runs parsing through verified indexing. `GET /api/sessions/{session_id}/document` returns EMPTY, PROCESSING, READY, or FAILED for that session. Show the ready message only after indexing has been verified. Do not route document questions to retrieval before READY. Keep normal tutor questions available during processing and after readiness. Use one active document per session and keep upload, status, and tutor responses in the existing conversation.
 
 Do not build login, profile, history, analytics, or unrelated screens yet.
 

@@ -1,6 +1,7 @@
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ from app.services.gemini import (
 from app.services.document_ingestion import (
     DocumentIngestionError,
     DocumentStorageError,
+    SUPPORTED_FORMATS,
     UnsupportedDocumentFormatError,
     ingest_document,
 )
@@ -30,6 +32,9 @@ from app.services.rag.markdown_loader import MarkdownDocumentError
 from app.services.rag.postgres_store import (
     DatabaseConfigurationError,
     DatabasePersistenceError,
+    mark_session_document_failed,
+    session_document_status,
+    start_session_document_processing,
 )
 
 app = FastAPI(title="AI Tutor API")
@@ -82,6 +87,22 @@ class DocumentIngestionResponse(BaseModel):
     metadata: DocumentMetadataResponse
 
 
+class DocumentUploadResponse(BaseModel):
+    message: str
+    document_id: str
+    processing_status: str
+    chunk_count: int
+    embedding_dimension: int
+    metadata: DocumentMetadataResponse
+
+
+class SessionDocumentStatusResponse(BaseModel):
+    processing_status: str
+    original_filename: str | None = None
+    processing_error: str | None = None
+    markdown_filename: str | None = None
+
+
 class DocumentIndexRequest(BaseModel):
     markdown_filename: str = Field(min_length=1, max_length=255)
 
@@ -108,6 +129,125 @@ def root():
 @app.delete("/api/sessions/{session_id}", status_code=204)
 def delete_session(session_id: str) -> None:
     clear_tutor_session(session_id)
+
+
+@app.get(
+    "/api/sessions/{session_id}/document",
+    response_model=SessionDocumentStatusResponse,
+)
+def get_session_document_status(session_id: str) -> SessionDocumentStatusResponse:
+    try:
+        status = session_document_status(session_id)
+    except DatabaseConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except DatabasePersistenceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if status is None:
+        return SessionDocumentStatusResponse(processing_status="EMPTY")
+    return SessionDocumentStatusResponse(
+        processing_status=str(status["processing_status"]),
+        original_filename=str(status["original_filename"]),
+        processing_error=(
+            str(status["processing_error"])
+            if status["processing_error"] is not None
+            else None
+        ),
+        markdown_filename=(
+            str(status["markdown_filename"])
+            if status["markdown_filename"] is not None
+            else None
+        ),
+    )
+
+
+@app.post(
+    "/api/documents/upload",
+    response_model=DocumentUploadResponse,
+    status_code=201,
+)
+async def upload_and_prepare_document(
+    session_id: str = Form(min_length=1, max_length=100),
+    file: UploadFile = File(...),
+) -> DocumentUploadResponse:
+    if not file.filename or not file.filename.strip():
+        raise HTTPException(status_code=422, detail="A filename is required.")
+
+    file_type = Path(file.filename.replace("\\", "/")).suffix.lower().lstrip(".")
+    if file_type not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported file format. Upload a PDF, DOCX, XLS, or XLSX file.",
+        )
+
+    content = await file.read()
+    await file.close()
+    if not content:
+        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+
+    try:
+        document_id = start_session_document_processing(
+            session_id,
+            file.filename,
+            file_type,
+        )
+    except DatabaseConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except DatabasePersistenceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    try:
+        ingestion = ingest_document(file.filename, content)
+        indexed = index_stage10_markdown(
+            ingestion.markdown_filename,
+            document_id=document_id,
+            ready_status="READY",
+        )
+    except (
+        UnsupportedDocumentFormatError,
+        DocumentIngestionError,
+        DocumentStorageError,
+        MarkdownDocumentError,
+        EmbeddingModelError,
+        DatabaseConfigurationError,
+        DatabasePersistenceError,
+        ValueError,
+    ) as error:
+        try:
+            mark_session_document_failed(document_id, str(error))
+        except (DatabaseConfigurationError, DatabasePersistenceError) as status_error:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Document processing failed and its status could not be saved. "
+                    f"{status_error}"
+                ),
+            ) from status_error
+        if isinstance(error, UnsupportedDocumentFormatError):
+            raise HTTPException(status_code=415, detail=str(error)) from error
+        if isinstance(error, (DocumentIngestionError, MarkdownDocumentError, ValueError)):
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if isinstance(error, DocumentStorageError):
+            raise HTTPException(
+                status_code=500,
+                detail="The processed Markdown could not be saved.",
+            ) from error
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    return DocumentUploadResponse(
+        message="Your document is ready. You can ask questions about it.",
+        document_id=str(indexed.document_id),
+        processing_status=indexed.processing_status,
+        chunk_count=indexed.chunk_count,
+        embedding_dimension=indexed.embedding_dimension,
+        metadata=DocumentMetadataResponse(
+            original_filename=ingestion.original_filename,
+            file_type=ingestion.file_type,
+            processed_at=ingestion.processed_at,
+            markdown_filename=ingestion.markdown_filename,
+            markdown_path=ingestion.markdown_path,
+        ),
+    )
 
 
 @app.post(
