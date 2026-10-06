@@ -4,7 +4,7 @@
 Build the Phase 1 education-only AI Tutor described in `docs/AI Tutor - Teaching Bot — Project Blueprint.md`, following the sequence in `docs/AI Tutor - Teaching Bot — Implementation Roadmap.md`. It may teach multiple academic subjects, but it is not a general-purpose chatbot. React handles interaction, FastAPI handles HTTP and validation, LangGraph controls workflow and state, and the backend model classifies or generates learning content.
 
 ## Stage Progress
-Status reviewed on 2026-10-03:
+Status reviewed on 2026-10-06:
 
 - **Stage 1 — Project Setup: Complete.** Poetry/FastAPI, LangGraph and Gemini dependencies are configured in `pyproject.toml`; the React/Vite frontend exists under `frontend/`.
 - **Stage 2 — Basic FastAPI API: Complete for local development.** The health endpoint and Gemini endpoint are available, local Vite CORS is configured, and the learner confirmed both servers run.
@@ -20,8 +20,17 @@ Status reviewed on 2026-10-03:
 - **Stage 8 — Explain More: Complete.** The React follow-up control calls `POST /api/tutor/explain-more` with the active session ID. FastAPI verifies that the process-local session has lesson context, then routes the action through the guarded LangGraph flow to the explain-more node. The node uses the retained topic, learner level, and previous explanation to generate a clearer/deeper explanation without repeating it verbatim.
 - **Stage 9 — Another Example: Complete.** The React follow-up control calls `POST /api/tutor/example` with the same active session ID. FastAPI checks the session has the required lesson and example context; LangGraph retains the same topic and routes to the existing another-example node. The node uses the latest example as context so repeated requests produce distinct examples.
 
-### Current Work: Stage 10 — Quiz
-Implement the roadmap's optional quiz flow using the active session's retained learning context. Preserve the guarded graph routes, shared AI Tutor profile on generated content, and session lifecycle.
+### Stage 10 — Document Ingestion, Parsing & Markdown: Complete
+Stages 1–9 remain unchanged. `POST /api/documents/ingest` accepts PDF, DOCX, XLS, and XLSX uploads and dispatches to format-specific backend parsers: PyMuPDF for PDF, `python-docx` for DOCX, and pandas with `xlrd`/`openpyxl` engines for legacy/current Excel files. Each parser normalizes content and structure to Markdown; timestamped output and metadata are saved under `backend/data/markdown/`. Markdown frontmatter preserves the original filename, format, processing timestamp, and output path; page, heading, table, and sheet context remains in the Markdown body. Unsupported formats and corrupt documents return clear API errors. No chunking, embeddings, vector database, retrieval, or RAG routing is part of this stage.
+
+### Stage 11 — Chunking, Embeddings & Vector Database: Complete
+`POST /api/documents/index` loads Stage 10 Markdown and performs semantic/structure-aware chunking, preserving headings, PDF page numbers, spreadsheet sheet names, and table context; oversized sections are split with their context retained. Document and future query embeddings use local `BAAI/bge-small-en-v1.5` through `sentence-transformers`; the loaded model's output dimension was verified as 384. Documents and chunks are stored in PostgreSQL 17 + pgvector 0.8.7 using separate `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` settings from `backend/.env`. Schema includes document-to-chunk FK, JSONB chunk metadata, `vector(384)` embeddings, and a cosine HNSW index. psycopg keyword arguments carry passwords literally, including `@`. Verified a live index → PostgreSQL readback → cosine search round trip. Stage 11 adds no tutor retrieval route, grounded generation, readiness UX, or authentication.
+
+### Stage 12 — Retrieval + LangGraph Integration
+Use the existing AI Tutor and LangGraph, not a second chatbot. Keep normal tutor behavior working when no document is loaded. LangGraph owns workflow/state/routing/conditional decisions; preserve identity, greeting, educational-scope, and out-of-scope protections before retrieval. For a document question with a READY document, embed the query with the same local `BAAI/bge-small-en-v1.5` model, retrieve chunks from PostgreSQL + pgvector, and provide context to Gemini for a grounded answer. If the context is insufficient, clearly say the information could not be found in the document instead of inventing an answer.
+
+### Stage 13 — Document Ready State & RAG UX
+Block document questions from retrieval until upload, parsing, Markdown conversion, chunking, embedding, vector indexing, and successful verification are complete. Before READY, normal tutor questions still work and document questions receive a clear processing/not-ready message. Send a loaded/ready message only after successful verification; then document questions use RAG while normal educational questions use the normal tutor path. Start with one active document per session unless the existing project already has a different document model.
 
 The tutor uses static text for identity, greetings, and out-of-scope replies. Generated educational responses must not identify the assistant as Google, Gemini, or a language model, but may discuss these as educational topics when relevant.
 
@@ -56,14 +65,15 @@ Keep the Gemini key exclusively in the backend. The UI uses `VITE_API_URL` only 
 - Never print, expose, or commit API keys. Keep secrets on the backend; do not put them in `frontend/.env` or any `VITE_` variable.
 - The root `.gitignore` already ignores backend and frontend `.env` files. Preserve that protection.
 - `frontend/.env` currently sets `VITE_API_URL=http://localhost:8000`.
+- Configure the five `DB_*` values in ignored `backend/.env` as shown in `backend/.env.example`; keep the password there and never commit or print it. The PostgreSQL client receives discrete connection fields, not a URL.
 - The Gemini account currently supports `gemini-3.1-flash-lite`; keep `GEMINI_MODEL` aligned with an enabled model. This development environment cannot establish Gemini connections over IPv6, so `GEMINI_IPV4_ONLY=true` is the backend default; set it to `false` only in an IPv6-only environment.
 
 ## Development Conventions
 - Read the roadmap and nearby implementation before making a stage change.
 - Preserve the documented architecture and public API contracts; keep edits limited to the current stage.
-- Use existing dependencies and patterns. Avoid adding databases, authentication, RAG, or other explicitly deferred features.
+- Use existing dependencies and patterns. RAG is the current planned work; do not add authentication or unrelated deferred features.
 - Validate each stage against its roadmap completion condition before marking it complete here. Record only verified progress and update this file when stage status changes.
 - Do not treat a dependency being installed or a server command having been run as proof that a feature works.
 
 ## Verification Note
-Stages 7–9 are covered by backend tests for follow-up context, retained graph state, session clearing, dedicated action routes, missing-context rejection, and backend instance IDs. The full backend suite passed (38 tests), and frontend `npm run lint` and `npm run build` passed after implementing stages 8 and 9. Run relevant backend and frontend checks after subsequent API, session, or workflow changes.
+The full backend suite passes (59 tests; the explicitly gated PostgreSQL integration test is skipped during the default suite). The live PostgreSQL integration test was run separately and passed for actual local BGE embeddings, 384-dimensional pgvector persistence/readback, metadata, and cosine similarity search; its temporary test record is cleaned up. The standalone model check also confirms the shared model returns 384-dimensional document and query vectors. Keep database credentials local in ignored `backend/.env`; do not include them in logs or reports. Existing identity, greeting, scope, tutor, Explain More, and Another Example tests pass unchanged.

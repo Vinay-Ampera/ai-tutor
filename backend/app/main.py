@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,22 @@ from app.services.gemini import (
     GeminiConfigurationError,
     GeminiQuotaError,
     GeminiRequestError,
+)
+from app.services.document_ingestion import (
+    DocumentIngestionError,
+    DocumentStorageError,
+    UnsupportedDocumentFormatError,
+    ingest_document,
+)
+from app.services.rag.embeddings import (
+    EMBEDDING_DIMENSION,
+    EmbeddingModelError,
+)
+from app.services.rag.indexing import index_stage10_markdown
+from app.services.rag.markdown_loader import MarkdownDocumentError
+from app.services.rag.postgres_store import (
+    DatabaseConfigurationError,
+    DatabasePersistenceError,
 )
 
 app = FastAPI(title="AI Tutor API")
@@ -53,6 +69,34 @@ class GeminiResponse(BaseModel):
     follow_up_available: bool
 
 
+class DocumentMetadataResponse(BaseModel):
+    original_filename: str
+    file_type: str
+    processed_at: str
+    markdown_filename: str
+    markdown_path: str
+
+
+class DocumentIngestionResponse(BaseModel):
+    message: str
+    metadata: DocumentMetadataResponse
+
+
+class DocumentIndexRequest(BaseModel):
+    markdown_filename: str = Field(min_length=1, max_length=255)
+
+
+class DocumentIndexResponse(BaseModel):
+    document_id: str
+    original_filename: str
+    source_format: str
+    markdown_filename: str
+    markdown_path: str
+    chunk_count: int
+    embedding_dimension: int
+    processing_status: str
+
+
 @app.get("/")
 def root():
     return {
@@ -64,6 +108,79 @@ def root():
 @app.delete("/api/sessions/{session_id}", status_code=204)
 def delete_session(session_id: str) -> None:
     clear_tutor_session(session_id)
+
+
+@app.post(
+    "/api/documents/ingest",
+    response_model=DocumentIngestionResponse,
+    status_code=201,
+)
+async def ingest_uploaded_document(
+    file: UploadFile = File(...),
+) -> DocumentIngestionResponse:
+    if not file.filename or not file.filename.strip():
+        raise HTTPException(status_code=422, detail="A filename is required.")
+
+    content = await file.read()
+    await file.close()
+    if not content:
+        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+
+    try:
+        result = ingest_document(file.filename, content)
+    except UnsupportedDocumentFormatError as error:
+        raise HTTPException(status_code=415, detail=str(error)) from error
+    except DocumentIngestionError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except DocumentStorageError as error:
+        raise HTTPException(
+            status_code=500,
+            detail="The processed Markdown could not be saved.",
+        ) from error
+
+    return DocumentIngestionResponse(
+        message="Document parsed and saved as Markdown.",
+        metadata=DocumentMetadataResponse(
+            original_filename=result.original_filename,
+            file_type=result.file_type,
+            processed_at=result.processed_at,
+            markdown_filename=result.markdown_filename,
+            markdown_path=result.markdown_path,
+        ),
+    )
+
+
+@app.post(
+    "/api/documents/index",
+    response_model=DocumentIndexResponse,
+    status_code=201,
+)
+def index_markdown_document(
+    request: DocumentIndexRequest,
+) -> DocumentIndexResponse:
+    try:
+        result = index_stage10_markdown(request.markdown_filename)
+    except MarkdownDocumentError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except EmbeddingModelError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except DatabaseConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except DatabasePersistenceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return DocumentIndexResponse(
+        document_id=str(result.document_id),
+        original_filename=result.original_filename,
+        source_format=result.source_format,
+        markdown_filename=result.markdown_filename,
+        markdown_path=result.markdown_path,
+        chunk_count=result.chunk_count,
+        embedding_dimension=EMBEDDING_DIMENSION,
+        processing_status=result.processing_status,
+    )
 
 
 def _run_tutor_request(

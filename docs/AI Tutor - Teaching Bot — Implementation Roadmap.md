@@ -167,7 +167,7 @@ React
 
 works end-to-end, and repeated turns remain visible until Start over.
 
-The visible transcript is separate from model context. The current API sends only the newest question; add a bounded context window in Stage 13 without removing older turns from the visible transcript.
+The visible transcript is separate from model context. The current API sends only the newest question; add a bounded context window in Stage 17 without removing older turns from the visible transcript.
 
 ### Implementation Status — 2026-10-03
 
@@ -416,7 +416,154 @@ The learner can request multiple examples while remaining in the same learning c
 
 ---
 
-# Stage 10 — Quiz
+# Stage 10 — Document Ingestion, Parsing & Markdown
+
+## Goal
+
+Accept PDF, DOCX, XLS, and XLSX documents and normalize each into clean Markdown for the later RAG stages.
+
+The ingestion flow is:
+
+```text
+User uploads document
+      ↓
+Detect and validate format
+      ↓
+Format-specific parser
+      ↓
+Extract content
+      ↓
+Normalize content
+      ↓
+Convert to clean Markdown
+      ↓
+Save Markdown file
+```
+
+Use the current format-specific parser decisions:
+
+| Format | Parser |
+|---|---|
+| PDF | PyMuPDF (`fitz`) |
+| DOCX | `python-docx` |
+| XLS / XLSX | `pandas` + `openpyxl` |
+
+PDF processing should extract text, preserve headings/structure where possible, extract tables, and represent tables cleanly in Markdown. DOCX processing should extract paragraphs and tables, preserve headings where possible, and convert the result to Markdown. XLS/XLSX processing should handle workbooks and sheets, preserve sheet structure, and represent tabular data as Markdown tables where appropriate.
+
+Save the normalized Markdown using the original uploaded filename plus a timestamp, for example `lecture_notes_20261006_143522.md`. The timestamp must make each saved file unique, including when same-named files are uploaded within the same second. This Markdown is the normalized document representation consumed by later RAG stages. Do not replace these parsers with a generic parser unless a concrete technical problem is identified.
+
+### Completion condition
+
+PDF, DOCX, XLS, and XLSX uploads are validated, parsed with their selected parser, converted to readable Markdown, and saved under a collision-safe timestamped filename.
+
+---
+
+# Stage 11 — Chunking, Embeddings & Vector Database
+
+## Goal
+
+Transform the Stage 10 Markdown into searchable document chunks:
+
+```text
+Markdown
+   ↓
+Chunking
+   ↓
+Embeddings
+   ↓
+Vector database storage
+```
+
+Use semantic/structure-aware chunking over Markdown headings, sections, paragraphs, and tables; split oversized sections further while retaining their heading and page/sheet context. Do not use fixed-size character splitting as the primary chunking strategy.
+
+Use the local `BAAI/bge-small-en-v1.5` model through `sentence-transformers` for both document chunk embeddings and later query embeddings. Its actual output dimension is 384; validate the loaded model output against the PostgreSQL `vector(384)` schema. Do not substitute an embedding API or another model.
+
+Store the documents and chunks in PostgreSQL 17 + pgvector 0.8.7, using `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` from `backend/.env`. Connect with separate driver arguments (not a URL) so reserved characters in passwords, including `@`, are handled as literal password data. Store original filename, source format, Markdown filename/path, upload/processing timestamp, processing status, chunk content, and useful section/page/sheet metadata. Use a document-to-chunk foreign key and a cosine-similarity HNSW index for later retrieval. Keep ownership nullable so authentication can be added later without implementing it now.
+
+Stage 11 indexes a Stage 10 Markdown file and verifies stored document/chunk records. It also exposes the same BGE query-embedding function for later use, but does not implement the user-question → retrieval → Gemini flow.
+
+### Completion condition
+
+Completion: a Stage 10 Markdown file is structure-aware chunked, embedded locally with `BAAI/bge-small-en-v1.5` (384 dimensions), and stored with metadata in PostgreSQL + pgvector; the stored records and query-embedding format are verified.
+
+---
+
+# Stage 12 — Retrieval + LangGraph Integration
+
+## Goal
+
+Add document-grounded questions to the existing AI Tutor and existing LangGraph architecture. This is not a second chatbot.
+
+Conceptual routing:
+
+```text
+User
+ ↓
+FastAPI
+ ↓
+LangGraph
+ ↓
+Determine request
+ ├── Normal Tutor
+ └── Document Retrieval
+ ↓
+Gemini
+ ↓
+Answer
+```
+
+When a document is ready, a document-related educational question follows:
+
+```text
+User asks about the document
+      ↓
+LangGraph
+      ↓
+Create query embedding with BAAI/bge-small-en-v1.5
+      ↓
+Retrieve relevant chunks from PostgreSQL + pgvector
+      ↓
+Provide retrieved context to Gemini
+      ↓
+Generate a grounded answer
+```
+
+Normal tutor behavior must continue when no document is loaded. Keep identity, greeting, educational-scope, and out-of-scope protections in the existing LangGraph flow and apply them before retrieval and generation. LangGraph owns workflow orchestration, state, routing, and conditional decisions; Gemini understands language and generates the answer. For document questions, Gemini must use retrieved context and clearly say when the document does not contain enough information rather than inventing an answer.
+
+### Completion condition
+
+Tests verify normal tutor routing without a document, guarded document retrieval with a ready document, and a clear “not found in the document” response when retrieved context is insufficient.
+
+---
+
+# Stage 13 — Document Ready State & RAG UX
+
+## Goal
+
+Do not allow document questions to enter retrieval just because a file was selected or uploaded. A document becomes READY only after:
+
+```text
+Upload
+ → Parse
+ → Markdown
+ → Chunk
+ → Embedding
+ → Vector DB indexing
+ → Successful verification
+ → READY
+```
+
+After successful indexing, tell the user: “Your document is loaded. You can now ask questions about it.”
+
+Before READY, normal tutor questions continue to work, document questions are not sent to retrieval, and the user receives a clear processing/not-ready message. After READY, document questions use RAG while normal educational questions continue through the normal tutor path. The initial scope is one active document per session unless the existing project already has a different document model.
+
+### Completion condition
+
+The UI and backend expose processing/not-ready and READY behavior accurately; document retrieval is blocked until indexing has been verified, and the ready message is sent only after that verification.
+
+---
+
+# Stage 14 — Quiz
 
 ## Goal
 
@@ -472,7 +619,7 @@ The learner can voluntarily enter and complete a quiz.
 
 ---
 
-# Stage 11 — React Follow-Up Experience
+# Stage 15 — React Follow-Up Experience
 
 ## Goal
 
@@ -496,7 +643,7 @@ Avoid building unnecessary dashboard functionality at this stage.
 
 ---
 
-# Stage 12 — Error Handling
+# Stage 16 — Error Handling
 
 Once the main flow works, handle failures properly.
 
@@ -518,7 +665,7 @@ Do not expose internal stack traces or sensitive configuration.
 
 ---
 
-# Stage 13 — Token Optimization
+# Stage 17 — Token Optimization
 
 After the complete workflow works, optimize token usage.
 
@@ -572,7 +719,7 @@ Efficient AI call
 
 ---
 
-# Stage 14 — Testing
+# Stage 18 — Testing
 
 Testing should happen throughout development, not only at the end.
 
@@ -591,6 +738,8 @@ Test:
 - Fail-closed behavior for invalid or inconsistent classifier output
 - Out-of-scope inputs never reaching teaching or quiz generation nodes
 - AI Tutor identity and prohibited-name rules on generated output
+- Document parsing, Markdown normalization, chunking, embedding, and indexing
+- Retrieval routing, insufficient-context behavior, and document readiness gates
 
 ### Workflow tests
 
@@ -649,7 +798,7 @@ Check:
 
 ---
 
-# Stage 15 — Security Before Deployment
+# Stage 19 — Security Before Deployment
 
 Before exposing the application publicly, add:
 
@@ -668,7 +817,7 @@ The Gemini key must remain exclusively on the backend.
 
 ---
 
-# Stage 16 — Deployment Preparation
+# Stage 20 — Deployment Preparation
 
 Only after the local application is stable should deployment begin.
 
@@ -694,7 +843,7 @@ For a deployed multi-user application, they generally should not remain the long
 
 ---
 
-# Stage 17 — Database
+# Stage 21 — Database
 
 Introduce a database only when persistent data becomes necessary.
 
@@ -724,37 +873,7 @@ Database  Gemini
 
 ---
 
-# Stage 18 — RAG
-
-RAG should be introduced when the tutor needs to answer questions using specific external learning material.
-
-Examples:
-
-- Course PDFs
-- Class notes
-- Documentation
-- Study materials
-- Uploaded textbooks
-
-Future flow:
-
-```text
-User Question
-      ↓
-Retrieve Relevant Content
-      ↓
-LangGraph
-      ↓
-Gemini
-      ↓
-Grounded Answer
-```
-
-RAG should not be added to Phase 1 merely because the project is an AI application.
-
----
-
-# Stage 19 — Authentication and Personalization
+# Stage 22 — Authentication and Personalization
 
 Later, add:
 
@@ -779,7 +898,7 @@ Then the tutor can maintain:
 
 ---
 
-# Stage 20 — Advanced Tutor
+# Stage 23 — Advanced Tutor
 
 Once the basic tutor is stable, possible improvements include:
 
@@ -789,7 +908,6 @@ Once the basic tutor is stable, possible improvements include:
 - Progress tracking
 - Multiple quiz formats
 - Personalized explanations
-- Document-based tutoring
 - Voice interaction
 - Analytics
 - Teacher/admin capabilities
@@ -821,27 +939,33 @@ The entire implementation should follow this sequence:
        ↓
 9. Another Example
        ↓
-10. Optional Quiz
+10. Document ingestion, parsing & Markdown
        ↓
-11. React follow-up experience
+11. Chunking, embeddings & vector database (BGE + PostgreSQL/pgvector)
        ↓
-12. Error handling
+12. Retrieval + LangGraph integration
        ↓
-13. Token optimization
+13. Document ready state & RAG UX
        ↓
-14. Testing
+14. Optional Quiz
        ↓
-15. Security
+15. React follow-up experience
        ↓
-16. Deployment
+16. Error handling
        ↓
-17. Database
+17. Token optimization
        ↓
-18. RAG
+18. Testing
        ↓
-19. Authentication/personalization
+19. Security
        ↓
-20. Advanced features
+20. Deployment
+       ↓
+21. Database
+       ↓
+22. Authentication/personalization
+       ↓
+23. Advanced features
 ```
 
 ---
@@ -852,7 +976,7 @@ Do not move to the next major stage until the current stage works.
 
 For example:
 
-Do not build RAG before the normal tutor works.
+Build RAG only after the normal tutor foundation works; Stages 10–13 now add document-grounded tutoring before the remaining roadmap stages.
 
 Do not build authentication before the API works.
 
@@ -889,6 +1013,14 @@ Tutor explains
       ↓
 Tutor gives an example
       ↓
+Learner may upload a document
+      ↓
+Upload → parse → Markdown → chunk → embed → index → verify → READY
+      ↓
+Learner asks:
+      ├── Normal educational question → normal Tutor path
+      └── Document question → retrieve chunks → Gemini grounded answer
+      ↓
 Learner chooses:
       ├── Explain More
       ├── Another Example
@@ -901,8 +1033,8 @@ Learner chooses:
              Feedback
 ```
 
-This is the complete initial product.
+This is the Phase 1 tutor and document-grounded learning workflow.
 
-Everything else should be treated as an extension of this working foundation.
+Later roadmap stages extend this working foundation.
 
 The tutor responds only to greetings and educational requests. The user-facing assistant identifies as an AI Tutor and may discuss providers or language models as educational subjects without identifying as them.
