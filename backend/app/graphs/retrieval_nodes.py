@@ -24,7 +24,7 @@ DOCUMENT_REFERENCE_PATTERN = re.compile(
     r"(?:lecture|class|study|my)\s+(?:notes|materials))"
     r"|"
     r"(?:the|this|my)\s+(?:uploaded\s+)?"
-    r"(?:document|file|pdf|docx|spreadsheet|workbook)"
+    r"(?:document|file|pdf|docx|sheet|xl|xls|spreadsheet|workbook)"
     r"|"
     r"\b(?:uploaded|attached)\s+(?:document|file|pdf|docx|spreadsheet|workbook)"
     r")\b",
